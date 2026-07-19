@@ -12,6 +12,9 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.nimCache }}
+  {{- with .Values.persistence.modelCacheStorageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -24,6 +27,9 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.nimHfCache }}
+  {{- with .Values.persistence.modelCacheStorageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

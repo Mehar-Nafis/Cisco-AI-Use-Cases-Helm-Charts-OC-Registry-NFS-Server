@@ -40,6 +40,15 @@ db:
 # ---------------------------------------------------------------------------
 storage:
   storageClassName: "lvms-vg1"
+  # Separate override for model-weight caches (nim-cache-*, rails-hf-cache)
+  # only — deliberately NOT shared with storageClassName above, which also
+  # backs postgres/mongodb/milvus/minio's live data. Putting those databases
+  # on NFS has real reliability implications (fsync/locking semantics) that
+  # have nothing to do with air-gap resilience — this keeps the NFS overlay
+  # (values-storage-nfs.yaml) scoped to weight caches only, matching the
+  # insurguard chart's behavior. Empty ("") falls back to storageClassName
+  # above.
+  modelCacheStorageClassName: ""
   etcd:
     size: 1Gi
   minio:

@@ -104,6 +104,13 @@ persistence:
   # this air-gap effort.
   nimCache: 30Gi
   nimHfCache: 15Gi
+  # Empty ("") uses the cluster default StorageClass, same as mongodb/kafka
+  # above (which don't set storageClassName at all). Set to "nfs-client" via
+  # values-storage-nfs.yaml to make nim-llm's cache survive `helm
+  # uninstall` — deliberately separate from mongodb/kafka so business data
+  # doesn't move to NFS as a side effect (fsync/locking implications
+  # unrelated to air-gap resilience).
+  modelCacheStorageClassName: ""
 
 # RECOMMENDED for air-gap resilience — see templates/nim-llm.yaml's
 # NIM_MODEL_NAME comment for the full explanation and its caveats (this

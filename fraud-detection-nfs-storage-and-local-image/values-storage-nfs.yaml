@@ -1,0 +1,25 @@
+# ============================================================================
+# ALWAYS-ON storage overlay — apply on EVERY deploy once the shared NFS
+# provisioner is installed (nfs-subdir-external-provisioner, StorageClass
+# "nfs-client", cluster-wide — see the insurguard chart's
+# values-storage-nfs.yaml for how it was originally set up; reused as-is
+# here, no per-namespace grant needed since StorageClasses aren't namespaced).
+#
+# Puts only nim-llm's two caches (nim-cache, nim-hf-cache — previously
+# emptyDir, no persistence existed at all before this air-gap effort) on
+# NFS. Deliberately does NOT touch mongodb/kafka's persistence, which stay
+# on the cluster default StorageClass — putting that business data on NFS
+# has real reliability implications (fsync/locking semantics) unrelated to
+# air-gap resilience.
+#
+# The first online deploy downloads weights straight onto the NFS box; every
+# deploy after that — even after a full `helm uninstall` — finds them
+# already there and skips re-downloading, because the weights live in the
+# NFS export, not in the PVC object itself.
+#
+# Usage:
+#   helm upgrade --install <release> . -f values.yaml -f values-storage-nfs.yaml \
+#     --set ngcApiKey=<YOUR_NGC_KEY> -n fraud-detection
+# ============================================================================
+persistence:
+  modelCacheStorageClassName: "nfs-client"

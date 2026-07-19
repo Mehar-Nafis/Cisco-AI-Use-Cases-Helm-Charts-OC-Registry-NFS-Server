@@ -20,8 +20,8 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.nimCache.llama }}
-  {{- if .Values.storage.storageClassName }}
-  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- with (.Values.storage.modelCacheStorageClassName | default .Values.storage.storageClassName) }}
+  storageClassName: {{ . }}
   {{- end }}
 ---
 apiVersion: v1
@@ -37,8 +37,8 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.nimCache.content }}
-  {{- if .Values.storage.storageClassName }}
-  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- with (.Values.storage.modelCacheStorageClassName | default .Values.storage.storageClassName) }}
+  storageClassName: {{ . }}
   {{- end }}
 ---
 apiVersion: v1
@@ -54,8 +54,8 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.nimCache.topicControl }}
-  {{- if .Values.storage.storageClassName }}
-  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- with (.Values.storage.modelCacheStorageClassName | default .Values.storage.storageClassName) }}
+  storageClassName: {{ . }}
   {{- end }}
 ---
 apiVersion: v1
@@ -71,7 +71,7 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.nimCache.embedqa }}
-  {{- if .Values.storage.storageClassName }}
-  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- with (.Values.storage.modelCacheStorageClassName | default .Values.storage.storageClassName) }}
+  storageClassName: {{ . }}
   {{- end }}
 {{- end }}

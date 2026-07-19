@@ -1,0 +1,35 @@
+# ============================================================================
+# ALWAYS-ON storage overlay — apply on EVERY deploy once the shared NFS
+# provisioner is installed (nfs-subdir-external-provisioner, StorageClass
+# "nfs-client", cluster-wide — see the insurguard chart's
+# values-storage-nfs.yaml for how it was originally set up; reused as-is
+# here, no per-namespace grant needed since StorageClasses aren't namespaced).
+#
+# This chart already has per-PVC storageClass overrides (see
+# persistence.<name>.storageClass in values.yaml), so unlike the
+# chat-assistant charts this needed no template changes — just override the
+# 3 model-weight caches here. Deliberately leaves redisData, vstData,
+# vstVideo (app/business data, not model weights) and vssSharedMedia (shared
+# /tmp scratch space) on the local default — putting those on NFS has real
+# reliability implications (fsync/locking semantics) unrelated to air-gap
+# resilience.
+#
+# NOTE: values.yaml's own comment says vssSharedMedia/viaNgcModelCache/
+# viaHfCache "must use ReadWriteMany (RWX)" but their accessMode is set to
+# ReadWriteOnce — nfs-subdir-external-provisioner's StorageClass supports RWX
+# if you want true multi-pod-node fan-out; this overlay doesn't change
+# accessMode, only storageClass. Revisit if via-server and
+# nv-cv-event-detector ever need to run on different nodes simultaneously.
+#
+# Usage:
+#   helm upgrade --install <release> . -f values.yaml -f values-storage-nfs.yaml \
+#     --set global.ngcApiKey=<YOUR_NGC_KEY> --set global.hfToken=<YOUR_HF_TOKEN> \
+#     -n <namespace>
+# ============================================================================
+persistence:
+  viaNgcModelCache:
+    storageClass: "nfs-client"
+  viaHfCache:
+    storageClass: "nfs-client"
+  nimModelCache:
+    storageClass: "nfs-client"

@@ -1,0 +1,25 @@
+# ============================================================================
+# ALWAYS-ON storage overlay — apply on EVERY deploy once the shared NFS
+# provisioner is installed (nfs-subdir-external-provisioner, StorageClass
+# "nfs-client", cluster-wide — see the insurguard chart's
+# values-storage-nfs.yaml for how it was originally set up; reused as-is
+# here, no per-namespace grant needed since StorageClasses aren't namespaced).
+#
+# Puts only the model-weight caches (nim-cache-llama/content/topic-control/
+# embedqa, rails-hf-cache) on NFS — deliberately does NOT touch
+# storage.storageClassName, which also backs postgres/mongodb/milvus/minio's
+# live data. Putting those databases on NFS has real reliability
+# implications (fsync/locking semantics) unrelated to air-gap resilience, so
+# this is scoped to caches only via storage.modelCacheStorageClassName.
+#
+# The first online deploy downloads weights straight onto the NFS box; every
+# deploy after that — even after a full `helm uninstall` — finds them
+# already there and skips re-downloading, because the weights live in the
+# NFS export, not in the PVC object itself.
+#
+# Usage:
+#   helm upgrade --install <release> . -f values.yaml -f values-storage-nfs.yaml \
+#     --set ngc.apiKey=<YOUR_NGC_KEY> -n chat-assistant
+# ============================================================================
+storage:
+  modelCacheStorageClassName: "nfs-client"
