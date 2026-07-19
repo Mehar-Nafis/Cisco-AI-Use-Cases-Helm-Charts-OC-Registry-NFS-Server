@@ -1,0 +1,104 @@
+{{- if and (not .Values.nemotronVlm.localModelPath) (not .Values.nemotronVlm.modelProfile) (not .Values.nvidiaApiKey) }}
+{{ fail "nemotron-vlm needs nemotronVlm.localModelPath, nemotronVlm.modelProfile, or nvidiaApiKey set. With none of these, nim_llm_sdk.hub.ngc_injector.inject_ngc_hub (assumed shared with llama-parser — same nim_llm_sdk-style HF-hub cache layout observed under this NIM's NFS cache, though not independently confirmed by inspecting this specific image) falls through to its manifest/NGC profile-lookup path at startup — on a truly air-gapped network that call can't even resolve, so the pod hangs/crash-loops instead of failing fast. localModelPath is the recommended fix: set it to the absolute in-container path (under /opt/nim/.cache, matching your NFS-mounted nim-cache PVC) of an already-downloaded HF-format snapshot directory — inject_ngc_hub takes an early, NGC-free branch whenever NIM_MODEL_NAME resolves to an existing local directory. modelProfile (NIM_MODEL_PROFILE) is the older mechanism and still goes through manifest/NGC lookup." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insurguard.fullname" . }}-nemotron-vlm
+  labels:
+    {{- include "insurguard.labels" . | nindent 4 }}
+    app.kubernetes.io/name: nemotron-vlm
+spec:
+  replicas: {{ .Values.nemotronVlm.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nemotron-vlm
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nemotron-vlm
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        insurguard/gpu-workload: "true"
+        insurguard/nim-heavy: "true"
+    spec:
+      {{- include "insurguard.gpuTopologySpread" . | nindent 6 }}
+      {{- include "insurguard.nimAntiAffinity" (dict "component" "nemotron-vlm" "Release" .Release) | nindent 6 }}
+      {{- include "insurguard.gpuNodeSelector" . | nindent 6 }}
+      securityContext:
+        {{- include "insurguard.securityContext" . | nindent 8 }}
+      {{- if .Values.ngcImagePull.enabled }}
+      imagePullSecrets:
+        - name: {{ include "insurguard.imagePullSecretName" . }}
+      {{- end }}
+      containers:
+        - name: nemotron-vlm
+          image: {{ .Values.nemotronVlm.image }}
+          securityContext:
+            {{- include "insurguard.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- if .Values.nemotronVlm.localModelPath }}
+            - name: NIM_MODEL_NAME
+              value: {{ .Values.nemotronVlm.localModelPath | quote }}
+            {{- else if .Values.nemotronVlm.modelProfile }}
+            - name: NIM_MODEL_PROFILE
+              value: {{ .Values.nemotronVlm.modelProfile | quote }}
+            {{- end }}
+            {{- if .Values.nvidiaApiKey }}
+            - name: NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "insurguard.nvidiaSecretName" . }}
+                  key: NGC_API_KEY
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.nemotronVlm.port }}
+              name: http
+          volumeMounts:
+            - name: nim-cache
+              mountPath: /opt/nim/.cache
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            limits:
+              nvidia.com/gpu: {{ .Values.nemotronVlm.gpu | quote }}
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: {{ .Values.nemotronVlm.port }}
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /v1/health/live
+              port: {{ .Values.nemotronVlm.port }}
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 30
+      volumes:
+        - name: nim-cache
+          persistentVolumeClaim:
+            claimName: {{ include "insurguard.fullname" . }}-nim-cache-nemotron-vlm
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.nemotronVlm.shmSize }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "insurguard.fullname" . }}-nemotron-vlm
+  labels:
+    {{- include "insurguard.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.nemotronVlm.port }}
+      targetPort: http
+      name: http
+  selector:
+    app.kubernetes.io/name: nemotron-vlm
+    app.kubernetes.io/instance: {{ .Release.Name }}

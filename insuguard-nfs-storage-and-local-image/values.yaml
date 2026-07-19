@@ -1,0 +1,371 @@
+
+nvidiaApiKey: ""
+
+# GPU node targeting — only the value changes between GPU pools
+# Override at install time with --set gpu.product=<value>
+#
+# L40S nodes (wn1, wn2):
+#   --set gpu.product=NVIDIA-L40S-SHARED
+#
+# RTX 6000 Blackwell node (c845):
+#   --set gpu.product=NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition-SHARED
+gpu:
+  product: "NVIDIA-L40S-SHARED"
+
+# Storage class for all PersistentVolumeClaims
+# Leave empty ("") to use the cluster default storage class
+storageClass: "lvms-vg1"
+
+# ---------------------------------------------------------------------------
+# NIM model-weight caches (nemoretriever-parser, llama-parser, nemotron-vlm,
+# nvclip). Persisted so weights survive pod restarts instead of re-pulling
+# from nvcr.io every time (each pull is 15-40 min).
+#
+# storageClassName is empty by default -> falls back to the global
+# `storageClass` above (local LVMS). Point it at your NFS-backed class
+# (see ../nfs-backup/) with `-f values-storage-nfs.yaml` to make the cache
+# survive `helm uninstall` as well — the weights live in the NFS export, not
+# in the PVC, so a later `helm install` rebinds and finds them already there.
+# ---------------------------------------------------------------------------
+nimCache:
+  storageClassName: ""
+  nemoretrieverParser: 30Gi
+  llamaParser: 30Gi
+  nemotronVlm: 30Gi
+  nvclip: 15Gi
+
+# HuggingFace model-weight caches — forgeryDetectionApi and hiveAiDetection
+# download weights from huggingface.co at runtime (HF_HOME=/tmp/hf_cache),
+# a different upstream than the NIMs above (which pull from NGC/nvcr.io), so
+# this is tracked separately. Same rationale as nimCache: empty
+# storageClassName falls back to local `storageClass`; point it at NFS with
+# -f values-storage-nfs.yaml so the cache survives helm uninstall.
+# Both Deployments also set HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1
+# unconditionally, so a cache miss fails loudly instead of silently reaching
+# huggingface.co — make sure the cache is actually warm (first run with
+# network access, or pre-seeded) before relying on this in an air-gapped env.
+hfCache:
+  storageClassName: ""
+  forgeryDetectionApi: 15Gi
+  hiveAiDetection: 15Gi
+
+# Model-weight cache for face-embedding-api (DeepFace + anti-spoofing
+# models under MODEL_ROOT/DEEPFACE_HOME=/app/resources). Unlike nimCache/
+# hfCache, we don't know whether this image bakes its models in at build
+# time or downloads them from GitHub on first use — so the PVC is seeded by
+# an initContainer that copies whatever's already at /app/resources in the
+# image (if anything) into the cache on first run, then the app mounts the
+# (now-seeded) cache directly. Safe either way: if nothing was baked in, the
+# copy is a no-op and the app's own download-on-missing logic populates the
+# persistent cache instead.
+modelCache:
+  storageClassName: ""
+  faceEmbeddingApi: 5Gi
+
+# NGC Docker Registry pull secret — only needed if you override a NIM image
+# field back to a raw nvcr.io/... path (default images now come from the
+# in-cluster mirror, no nvcr.io auth required). Leave disabled by default:
+# when enabled, the 4 NIM Deployments list this secret explicitly in
+# imagePullSecrets, which — per Kubernetes' ServiceAccount admission
+# controller — SUPPRESSES auto-attachment of the SA's own internal-registry
+# secret (it only auto-injects when a pod's imagePullSecrets list is empty).
+# Enabling this without actually needing nvcr.io access breaks pulls from
+# the internal registry.
+ngcImagePull:
+  enabled: false
+  registry: nvcr.io
+  username: "$oauthtoken"
+  password: ""   
+  email: ""
+
+nameOverride: "insurguard"
+fullnameOverride: ""
+
+# OpenShift project / namespace
+namespace: ""
+
+# Global LLM model name
+llmModel: "meta/llama-3.1-8b-instruct"
+
+routes:
+  claimsFrontend:
+    enabled: true
+    host: ""   
+  adminDashboard:
+    enabled: true
+    host: ""
+  claimsBackend:
+    enabled: false
+    host: ""
+
+# 1. Face Embedding API
+faceEmbeddingApi:
+  image: image-registry.openshift-image-registry.svc:5000/insurguard/insurguard:face-embedding-api
+  replicas: 1
+  port: 8000
+  servicePort: 8090
+  env:
+    HOST: "0.0.0.0"
+    PORT: "8000"
+    LOG_LEVEL: info
+    WORKERS: "1"
+    MODEL_ROOT: /app/resources
+    DEEPFACE_HOME: /app/resources
+    ENABLE_ANTISPOOFING: "true"
+    ANTISPOOFING_MODEL_DIR: /app/resources/anti_spoof_models
+    DEVICE_ID: "0"
+
+# 2. NeMo Retriever Parser
+# NOTE: nemoretriever-parse does not support RTX 6000 Blackwell (TRT-LLM 0.16 lacks sm_100).
+# Set enabled: false on Blackwell — OCR_URL will fall back to nemotron-vlm automatically.
+nemoretrieverParser:
+  enabled: true
+  # In-cluster mirror (nim-mirror namespace). Original was tagged :latest —
+  # pinned to an immutable digest-backed tag when mirrored (2026-07-17) so
+  # this doesn't silently drift. See ./nfs-backup/README.md.
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/nim-nvidia-nemoretriever-parse:mirrored-20260717
+  replicas: 1
+  port: 8000
+  servicePort: 8001
+  shmSize: "16Gi"
+  gpu: 1
+  # llamaParser/nemotronVlm below have a localModelPath option that
+  # genuinely avoids NGC (confirmed by reading nim_llm_sdk source — see
+  # llamaParser.localModelPath comment). NOT wired up here: this NIM
+  # (nemoretriever-parse) is Triton-based like nvclip's NIM-wrapper path,
+  # not nim_llm_sdk-based — unconfirmed whether the same NIM_MODEL_NAME
+  # trick applies until this image is actually inspected the way
+  # llama-parser's was (this component is currently disabled in the
+  # cluster this chart was developed against, so it hasn't been).
+  # Explicit profile bypasses the NGC hub/org lookup NIM otherwise does at
+  # startup (nimutils.download_models -> NGCClient().get_org_list()) even
+  # when the model cache is already warm — that lookup requires a valid NGC
+  # key regardless of cache state. Find the correct value for an already-
+  # cached model by inspecting the profile dir name under the NFS cache
+  # (see ../nfs-backup/README.md). Leave empty to require nvidiaApiKey.
+  modelProfile: ""
+  env:
+    NIM_HTTP_API_PORT: "8000"
+    NIM_TRITON_LOG_VERBOSE: "1"
+    # Uncomment to disable TRT-LLM on Blackwell (uses fallback backend)
+    # NIM_DISABLE_TRTLLM: "1"
+
+# 3. Llama Parser (LLM)
+llamaParser:
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/nim-meta-llama-3.1-8b-instruct:1.8.5
+  replicas: 1
+  port: 8000
+  servicePort: 8002
+  shmSize: "16Gi"
+  gpu: 1
+  # RECOMMENDED for air-gap — see nemoretrieverParser.localModelPath above
+  # for the full explanation. For THIS component it's confirmed directly:
+  # read straight from nim_llm_sdk.hub.ngc_injector.inject_ngc_hub source
+  # inside this exact image (backend is nim_llm_sdk + vLLM 0.6.3, confirmed
+  # via `python3 -c 'import vllm'` inside a running pod of this image).
+  # Set to the absolute in-container snapshot path, e.g.:
+  #   /opt/nim/.cache/ngc/hub/models--nim--meta--llama-3.1-8b-instruct/snapshots/<rev>
+  # (find <rev> under insurguard-nim-cache-llama-parser on the NFS export).
+  # Takes priority over modelProfile below if both are set.
+  localModelPath: ""
+  # Older mechanism — still goes through manifest/NGC profile lookup even
+  # with a warm cache (see nemoretrieverParser.modelProfile comment).
+  modelProfile: ""
+  env:
+    NIM_MAX_MODEL_LEN: "4096"
+
+# 4a. Etcd 
+etcd:
+  image: quay.io/coreos/etcd:v3.6.5
+  replicas: 1
+  pvcSize: 5Gi
+  env:
+    ETCD_AUTO_COMPACTION_MODE: revision
+    ETCD_AUTO_COMPACTION_RETENTION: "1000"
+    ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+    ETCD_SNAPSHOT_COUNT: "50000"
+
+# 4b. MinIO
+minio:
+  image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+  replicas: 1
+  apiPort: 9010
+  consolePort: 9011
+  pvcSize: 20Gi
+  accessKey: minioadmin
+  secretKey: minioadmin
+
+# 4c. Milvus
+milvus:
+  image: milvusdb/milvus:v2.6.2-gpu
+  replicas: 1
+  port: 19530
+  metricsPort: 9091
+  pvcSize: 20Gi
+  gpu: 1
+  gpuMemPoolSize: "2048;4096"
+
+# 5. PostgreSQL
+postgres:
+  image: postgres:15
+  replicas: 1
+  port: 5432
+  pvcSize: 10Gi
+  user: postgres
+  password: postgres_password
+  databases: "kyc_db,claims_db"
+
+# 6. KYC Verifier
+kycVerifier:
+  image: image-registry.openshift-image-registry.svc:5000/insurguard/insurguard:kyc-verifier-v1
+  replicas: 1
+  port: 8000
+  servicePort: 8095
+  env:
+    VECTOR_DIM: "512"
+    VERIFY_THRESHOLD: "15"
+    REVIEW_THRESHOLD: "5"
+    ANTISPOOF_CONFIDENCE_MIN: "0.8"
+
+# 7. Forgery Detection API
+forgeryDetectionApi:
+  image: image-registry.openshift-image-registry.svc:5000/insurguard/insurguard:forgery-detection-api
+  replicas: 1
+  port: 8000
+  servicePort: 8006
+  gpu: 1
+  env:
+    FORGERY_THRESHOLD: "0.7"
+    UPLOAD_DIR: "/tmp/uploads"
+
+# 7b. Hive AI Detection (AI-generated content detection)
+hiveAiDetection:
+  image: image-registry.openshift-image-registry.svc:5000/insurguard/insurguard:hive-ai-detection
+  replicas: 1
+  port: 8000
+  servicePort: 8070
+  gpu: 1
+  gpuProduct: "NVIDIA-L40S-SHARED"
+  env: {}
+
+# 8. Nemotron VLM
+nemotronVlm:
+  # In-cluster mirror. Original was tagged :latest — pinned to an immutable
+  # digest-backed tag when mirrored (2026-07-17). See ./nfs-backup/README.md.
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/nim-nvidia-llama-3.1-nemotron-nano-vl-8b-v1:mirrored-20260717
+  replicas: 1
+  port: 8000
+  servicePort: 8004
+  shmSize: "16Gi"
+  gpu: 1
+  # RECOMMENDED for air-gap — see llamaParser.localModelPath above. Inferred
+  # (not independently confirmed by inspecting this image's own source) from
+  # this NIM's NFS cache using the identical nim_llm_sdk-style HF-hub layout
+  # (models--<org>--<model>/snapshots/<rev>) that llama-parser has, where it
+  # WAS confirmed directly. Verify against this image before trusting it in
+  # production, same caveat as the nvclip adapter. Set to the absolute
+  # in-container snapshot path, e.g.:
+  #   /opt/nim/.cache/ngc/hub/models--nim--nvidia--llama-3.1-nemotron-nano-vl-8b-v1/snapshots/<rev>
+  # Takes priority over modelProfile below if both are set.
+  localModelPath: ""
+  # Older mechanism — still goes through manifest/NGC profile lookup even
+  # with a warm cache (see nemoretrieverParser.modelProfile comment).
+  modelProfile: ""
+
+# 9. NV-CLIP
+# Unlike llamaParser/nemotronVlm, this NIM's image unconditionally constructs
+# an NGCClient (which authenticates in its own __init__) as part of startup's
+# download_models() call — confirmed empirically that this happens BEFORE any
+# cache check or NIM_MODEL_PROFILE logic runs, so the NIM-wrapper path always
+# needs nvidiaApiKey regardless of a warm NFS cache. Because of that,
+# airgappedTritonMode below defaults to true — see its comment for the
+# trade-off it makes instead. The chart fails fast with a clear error (see
+# templates/nvclip.yaml) if you flip airgappedTritonMode back to false
+# without setting nvidiaApiKey, rather than a confusing crash loop.
+nvclip:
+  enabled: true
+  # In-cluster mirror. Original was tagged :latest — pinned to an immutable
+  # digest-backed tag when mirrored (2026-07-17). See ./nfs-backup/README.md.
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/nim-nvidia-nvclip:mirrored-20260717
+  replicas: 1
+  port: 8000
+  servicePort: 8005
+  shmSize: "8Gi"
+  # Only used when airgappedTritonMode is false (NIM-wrapper path). Left
+  # wired but confirmed ineffective for nvclip specifically (see note
+  # above) — harmless to leave set in case a future image build respects it.
+  modelProfile: "afd81bb5-1b82-4816-a1bd-312dd380e4d1"
+  gpu: 1
+  # ---------------------------------------------------------------------------
+  # DEFAULT true-air-gapped mode: skips the NIM Python wrapper (start_server)
+  # entirely and launches tritonserver directly against the already-cached
+  # Triton model repository on NFS — genuinely never touches NGC. A small
+  # adapter sidecar (see templates/nvclip-adapter-configmap.yaml and
+  # files/nvclip-adapter/adapter.py — same nvclip.image, no extra pull)
+  # re-exposes the NIM wrapper's /v1/embeddings HTTP API (base64 image in,
+  # embedding out) on top of Triton's native protocol, so claims-backend's
+  # NVCLIP_URL calls keep working without code changes.
+  #
+  # VERIFY BEFORE PRODUCTION: the adapter's image preprocessing (resize/
+  # normalization constants) and output handling (L2-normalize) are the
+  # standard OpenCLIP ViT-H-14 conventions, not read from anywhere
+  # nvclip-specific — they're my best-effort default, not confirmed against
+  # this exact model export. Tensor names/shapes/dtypes ARE read live from
+  # Triton's own metadata endpoint, not guessed. Run
+  # ./discover-airgap-info.sh's nvclip section (dumps the real config.pbtxt
+  # and, if you have a NIM-wrapper instance to compare against, a side-by-
+  # side embedding diff) before trusting this for real fraud-detection
+  # decisions. Set airgappedTritonMode: false + nvidiaApiKey to fall back to
+  # the original (NGC-dependent) NIM-wrapper path if verification fails.
+  #
+  # tritonModelRepositoryPath is specific to the currently-cached profile
+  # (see modelProfile comment above) — re-check if the image tag changes.
+  airgappedTritonMode: true
+  tritonModelRepositoryPath: "/opt/nim/.cache/triton-model-repository/nvclip-vit-h-14_vgenericx1_0.0.3"
+  # Cluster-internal-only port tritonserver listens on in airgappedTritonMode
+  # (the adapter proxies to it; nothing else should reach it directly).
+  tritonInternalPort: 8010
+  adapter:
+    # Both empty by default = auto-discovered from Triton's live model
+    # metadata (see files/nvclip-adapter/adapter.py) rather than hardcoded.
+    # Only set these if auto-discovery picks the wrong model in a multi-
+    # model repository, or you need to force a resolution auto-discovery
+    # gets wrong for a dynamic (-1) shape dimension.
+    modelName: ""
+    imageSize: ""
+
+# 10. Claims Backend 
+claimsBackend:
+  image: image-registry.openshift-image-registry.svc:5000/insurguard/insurguard:claims-backend
+  replicas: 1
+  port: 8000
+  servicePort: 8100
+  env:
+    MILVUS_COLLECTION: vehicle_images
+    MINIO_BUCKET: claims-data
+    FORGERY_THRESHOLD: "0.7"
+    DUPLICATE_THRESHOLD: "0.95"
+    UPLOAD_DIR: /app/uploads
+
+# 11. Claims Frontend
+claimsFrontend:
+  image: image-registry.openshift-image-registry.svc:5000/insurguard/insurguard:claims-frontend
+  replicas: 1
+  port: 8080
+  servicePort: 3100
+
+# 12. Admin Dashboard 
+adminDashboard:
+  image: image-registry.openshift-image-registry.svc:5000/insurguard/insurguard:admin-dashboard
+  replicas: 1
+  port: 8080
+  servicePort: 3200
+
+# 13. JupyterLab (development / debugging)
+jupyterlab:
+  enabled: false
+  image: jupyter/base-notebook:latest
+  replicas: 1
+  port: 8888
+  servicePort: 8888
+  pvcSize: 5Gi

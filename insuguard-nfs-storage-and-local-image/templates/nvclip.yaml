@@ -1,0 +1,191 @@
+{{- if .Values.nvclip.enabled }}
+{{- if and (not .Values.nvidiaApiKey) (not .Values.nvclip.airgappedTritonMode) }}
+{{ fail "nvclip requires nvidiaApiKey. Unlike the other NIMs in this chart, nvclip's image unconditionally authenticates to NGC (NGCClient().get_org_list()) as part of its startup download_models() call, before any cache check or NIM_MODEL_PROFILE logic runs — confirmed empirically, not fixable from this chart. Pass --set nvidiaApiKey=<key>, set --set nvclip.airgappedTritonMode=true to bypass the NIM wrapper entirely (see values.yaml comment for the trade-off), or --set nvclip.enabled=false if you don't need this component." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insurguard.fullname" . }}-nvclip
+  labels:
+    {{- include "insurguard.labels" . | nindent 4 }}
+    app.kubernetes.io/name: nvclip
+spec:
+  replicas: {{ .Values.nvclip.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nvclip
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nvclip
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        insurguard/gpu-workload: "true"
+    spec:
+      {{- include "insurguard.gpuTopologySpread" . | nindent 6 }}
+      {{- include "insurguard.gpuNodeSelector" . | nindent 6 }}
+      securityContext:
+        {{- include "insurguard.securityContext" . | nindent 8 }}
+      {{- if .Values.ngcImagePull.enabled }}
+      imagePullSecrets:
+        - name: {{ include "insurguard.imagePullSecretName" . }}
+      {{- end }}
+      containers:
+        {{- if .Values.nvclip.airgappedTritonMode }}
+        # --- True air-gapped path: tritonserver never touches NGC, and a
+        # small adapter sidecar (same image, no extra pull — see
+        # nvclip-adapter-configmap.yaml) translates its native KServe v2
+        # protocol back into the NIM wrapper's /v1/embeddings HTTP API that
+        # claims-backend expects. See files/nvclip-adapter/adapter.py for the
+        # ASSUMPTIONS THAT NEED FIELD VERIFICATION before trusting this in
+        # production (preprocessing constants, output normalization).
+        - name: triton
+          image: {{ .Values.nvclip.image }}
+          securityContext:
+            {{- include "insurguard.containerSecurityContext" . | nindent 12 }}
+          command: ["tritonserver"]
+          args:
+            - "--model-repository={{ .Values.nvclip.tritonModelRepositoryPath }}"
+            - "--http-port={{ .Values.nvclip.tritonInternalPort }}"
+            - "--allow-grpc=false"
+            - "--allow-http=true"
+          volumeMounts:
+            - name: nim-cache
+              mountPath: /opt/nim/.cache
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            limits:
+              nvidia.com/gpu: {{ .Values.nvclip.gpu | quote }}
+          readinessProbe:
+            httpGet:
+              path: /v2/health/ready
+              port: {{ .Values.nvclip.tritonInternalPort }}
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /v2/health/live
+              port: {{ .Values.nvclip.tritonInternalPort }}
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 30
+        - name: adapter
+          image: {{ .Values.nvclip.image }}
+          securityContext:
+            {{- include "insurguard.containerSecurityContext" . | nindent 12 }}
+          command: ["python3", "/adapter/adapter.py"]
+          env:
+            - name: TRITON_PORT
+              value: {{ .Values.nvclip.tritonInternalPort | quote }}
+            - name: ADAPTER_PORT
+              value: {{ .Values.nvclip.port | quote }}
+            {{- if .Values.nvclip.adapter.modelName }}
+            - name: MODEL_NAME
+              value: {{ .Values.nvclip.adapter.modelName | quote }}
+            {{- end }}
+            {{- if .Values.nvclip.adapter.imageSize }}
+            - name: IMAGE_SIZE
+              value: {{ .Values.nvclip.adapter.imageSize | quote }}
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.nvclip.port }}
+              name: http
+          volumeMounts:
+            - name: nvclip-adapter-script
+              mountPath: /adapter
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: {{ .Values.nvclip.port }}
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /v1/health/live
+              port: {{ .Values.nvclip.port }}
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 30
+        {{- else }}
+        # --- NIM-wrapper path: requires nvidiaApiKey (see fail guard above).
+        - name: nvclip
+          image: {{ .Values.nvclip.image }}
+          securityContext:
+            {{- include "insurguard.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- if .Values.nvclip.modelProfile }}
+            - name: NIM_MODEL_PROFILE
+              value: {{ .Values.nvclip.modelProfile | quote }}
+            {{- end }}
+            {{- if .Values.nvidiaApiKey }}
+            - name: NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "insurguard.nvidiaSecretName" . }}
+                  key: NGC_API_KEY
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.nvclip.port }}
+              name: http
+          volumeMounts:
+            - name: nim-cache
+              mountPath: /opt/nim/.cache
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            limits:
+              nvidia.com/gpu: {{ .Values.nvclip.gpu | quote }}
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: {{ .Values.nvclip.port }}
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /v1/health/live
+              port: {{ .Values.nvclip.port }}
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 30
+        {{- end }}
+      volumes:
+        - name: nim-cache
+          persistentVolumeClaim:
+            claimName: {{ include "insurguard.fullname" . }}-nim-cache-nvclip
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.nvclip.shmSize }}
+        {{- if .Values.nvclip.airgappedTritonMode }}
+        - name: nvclip-adapter-script
+          configMap:
+            name: {{ include "insurguard.fullname" . }}-nvclip-adapter
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "insurguard.fullname" . }}-nvclip
+  labels:
+    {{- include "insurguard.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.nvclip.port }}
+      targetPort: http
+      name: http
+  selector:
+    app.kubernetes.io/name: nvclip
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
