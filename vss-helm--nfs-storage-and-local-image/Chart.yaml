@@ -1,0 +1,20 @@
+apiVersion: v2
+name: vss-helm
+description: >
+  NVIDIA Video Search & Summarization (VSS) full-stack Helm chart for OpenShift.
+  Includes: VSS Engine (via-server), VST Storage, Redis, Alert Bridge,
+  Alert Inspector UI, API Gateway (nginx), NV CV Event Detector, CV UI,
+  NIM LLM (Nemotron 49B), and Manufacturing QA endpoint config.
+type: application
+version: 0.1.0
+appVersion: "2.4.1"
+keywords:
+  - nvidia
+  - vss
+  - deepstream
+  - llm
+  - nim
+  - video-analytics
+home: https://developer.nvidia.com/blog/nvidia-blueprint-for-video-search-and-summarization
+maintainers:
+  - name: NVIDIA VSS Team

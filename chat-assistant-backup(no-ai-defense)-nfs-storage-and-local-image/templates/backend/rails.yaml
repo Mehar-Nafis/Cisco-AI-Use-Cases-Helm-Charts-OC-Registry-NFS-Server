@@ -1,0 +1,135 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rails-hf-cache
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.hfCache.rails }}
+  {{- if .Values.storage.storageClassName }}
+  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rails
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: rails
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: rails
+  template:
+    metadata:
+      labels:
+        app: rails
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      containers:
+        - name: rails
+          image: {{ .Values.images.rails }}
+          ports:
+            - containerPort: 8012
+          env:
+            - name: NVIDIA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+            - name: HOME
+              value: /tmp
+            - name: HF_HOME
+              value: /tmp/.cache/huggingface
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /tmp/.cache/huggingface/hub
+            - name: TRANSFORMERS_CACHE
+              value: /tmp/.cache/huggingface/hub
+            - name: XDG_CACHE_HOME
+              value: /tmp/.cache
+            - name: FASTEMBED_CACHE_PATH
+              value: /tmp/.cache/fastembed
+            # Forces the HF client to use only what's already in the cache
+            # PVC below and never reach huggingface.co. NOTE: fastembed's own
+            # offline behavior hasn't been independently verified — confirm
+            # it actually honors HF_HUB_OFFLINE (it uses huggingface_hub
+            # under the hood in most versions) rather than needing its own
+            # flag before trusting this for fastembed specifically.
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
+          resources:
+            {{- include "chat-assistance.resources.backend" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 8012
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8012
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            # NemoGuardrails expects a directory – mount the whole ConfigMap here
+            - name: rails-config
+              mountPath: /app/shared/configs/rails
+              readOnly: true
+            # Patched main.py: adds top-level 'content' key to NemoGuardrails response
+            - name: rails-main-patch
+              mountPath: /app/main.py
+              subPath: main.py
+              readOnly: true
+            # Writable scratch space ($HOME etc.) — required on OpenShift
+            # where the pod runs as a random UID with no writable $HOME.
+            - name: tmp-scratch
+              mountPath: /tmp
+            # Persistent HF/fastembed model cache, mounted at the subpath the
+            # env vars above point at — survives pod restarts instead of the
+            # previous emptyDir (which guaranteed a cache miss, hence a live
+            # huggingface.co reach-out, on every restart even with
+            # HF_HUB_OFFLINE set).
+            - name: hf-cache
+              mountPath: /tmp/.cache
+      volumes:
+        - name: rails-config
+          configMap:
+            name: shared-configs
+            items:
+              - key: config.yml
+                path: config.yml
+        - name: rails-main-patch
+          configMap:
+            name: rails-main-patch
+        - name: tmp-scratch
+          emptyDir: {}
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: rails-hf-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rails
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 8012
+      targetPort: 8012
+  selector:
+    app: rails

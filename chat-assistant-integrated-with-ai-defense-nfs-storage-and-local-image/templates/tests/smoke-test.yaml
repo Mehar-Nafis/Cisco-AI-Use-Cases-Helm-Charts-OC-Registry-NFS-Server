@@ -1,0 +1,104 @@
+---
+# Helm test pod: verifies the policy-documents ConfigMap is mounted and valid,
+# the catalog-retriever is healthy, and per-user retrieval actually returns
+# each user's own policy document from Milvus on a first-turn identity query.
+# Run with: helm test <release> -n {{ .Values.namespace }} --logs
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-smoke-test
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: smoke-test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  {{- include "chat-assistance.nodeSelector" . | nindent 2 }}
+  restartPolicy: Never
+  containers:
+    - name: smoke-test
+      image: {{ .Values.images.chainServer }}
+      command:
+        - python3
+        - -c
+        - |
+          import json, os, sys, requests
+
+          failures = []
+
+          # 1. ConfigMap mount: metadata JSON present and every listed
+          #    document exists as a readable, non-corrupt PDF.
+          data_dir = "/app/shared/data"
+          meta_path = os.path.join(data_dir, "document-metadata.json")
+          meta = {"documents": []}
+          if not os.path.exists(meta_path):
+              failures.append(f"{meta_path} missing - policy-documents ConfigMap not mounted?")
+          else:
+              meta = json.load(open(meta_path))
+              print(f"OK: metadata JSON mounted, {len(meta['documents'])} documents listed")
+
+          for doc in meta.get("documents", []):
+              p = os.path.join(data_dir, doc["filename"])
+              if not os.path.exists(p):
+                  failures.append(f"{doc['filename']} listed in metadata but missing from ConfigMap")
+              elif open(p, "rb").read(5) != b"%PDF-":
+                  failures.append(f"{doc['filename']} is not a valid PDF (corrupt ConfigMap entry?)")
+              else:
+                  print(f"OK: {doc['filename']} mounted, valid PDF, user_id={doc['user_id']}")
+
+          # 2. Catalog retriever healthy.
+          url = "http://catalog-retriever:8010"
+          try:
+              r = requests.get(f"{url}/health", timeout=10)
+              r.raise_for_status()
+              print(f"OK: catalog-retriever /health -> {r.json()}")
+          except Exception as e:
+              failures.append(f"catalog-retriever /health failed: {e}")
+
+          # 3. End-to-end retrieval: a first-turn identity query for each user
+          #    must return chunks from that user's own document (regression
+          #    test for the top_k=1 / global-document-crowding bug).
+          user_docs = {d["user_id"]: d["filename"] for d in meta.get("documents", [])
+                       if d.get("document_type") == "user_specific"}
+          for user_id, filename in sorted(user_docs.items()):
+              try:
+                  r = requests.post(f"{url}/query/text", timeout=60, json={
+                      "text": ["What is my policy number?"],
+                      "categories": [],
+                      "k": 4,
+                      "user_id": user_id,
+                  })
+                  r.raise_for_status()
+                  names = r.json().get("names", [])
+                  if not names:
+                      failures.append(f"{user_id}: retrieval returned no chunks")
+                  elif filename not in names:
+                      failures.append(f"{user_id}: own document {filename} not in retrieved set {names}")
+                  else:
+                      print(f"OK: {user_id} first-turn retrieval includes own document ({sorted(set(names))})")
+              except Exception as e:
+                  failures.append(f"{user_id}: /query/text failed: {e}")
+
+          if failures:
+              print("\nSMOKE TEST FAILED:")
+              for f in failures:
+                  print(f"  - {f}")
+              sys.exit(1)
+          print("\nSMOKE TEST PASSED")
+      volumeMounts:
+        - name: policy-docs
+          mountPath: /app/shared/data
+          readOnly: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+  volumes:
+    - name: policy-docs
+      configMap:
+        name: policy-documents

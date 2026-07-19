@@ -1,0 +1,110 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "nv-cv-event-detector" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.primaryAffinity" . | nindent 6 }}
+      hostIPC: {{ .Values.cvEventDetector.hostIPC }}
+      {{- include "vss.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: nv-cv-event-detector
+          image: {{ .Values.cvEventDetector.image }}
+          imagePullPolicy: IfNotPresent
+          # Replicate Docker Compose ulimits: memlock=-1, nofile=65535, stack=64MB
+          # Create /dev/v4l2-nvenc so gstnvdscacheevent.py selects nvv4l2h264enc
+          # over x264enc. x264enc fails when forked from a running DeepStream
+          # pipeline; nvv4l2h264enc handles the forked GPU state correctly.
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              touch /dev/v4l2-nvenc
+              ulimit -l unlimited -n 65535 -s 65536
+              exec /opt/nvidia/nv-cv-event-detector/start_nv_cv_event_detector.sh
+          ports:
+            - containerPort: {{ .Values.cvEventDetector.apiPort }}
+              name: api
+          env:
+            - name: NV_CV_EVENT_DETECTOR_API_PORT
+              value: {{ .Values.cvEventDetector.apiPort | quote }}
+            - name: INSTALL_PROPRIETARY_CODECS
+              value: "true"
+            - name: USE_GDINO
+              value: {{ .Values.cvEventDetector.useGdino | quote }}
+            - name: DISABLE_SOM_OVERLAY
+              value: {{ .Values.cvEventDetector.disableSomOverlay | quote }}
+            - name: USE_TRACKER_CONFIG
+              value: {{ .Values.cvEventDetector.useTrackerConfig | quote }}
+            - name: CLIP_CACHE_PRE_EV_TIME
+              value: {{ .Values.cvEventDetector.clipCachePreEvTime | quote }}
+            - name: CLIP_CACHE_POST_EV_TIME
+              value: {{ .Values.cvEventDetector.clipCachePostEvTime | quote }}
+            - name: ENABLE_FILE_STREAMING_MODE
+              value: {{ .Values.cvEventDetector.enableFileStreamingMode | quote }}
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: {{ .Values.global.nvidiaVisibleDevices | quote }}
+            - name: LD_LIBRARY_PATH
+              value: "/opt/nvidia/deepstream/deepstream/lib:/opt/tritonserver/lib/"
+          resources:
+            {{- toYaml .Values.cvEventDetector.resources | nindent 12 }}
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: ngc-model-cache
+              mountPath: /root/.via/ngc_model_cache
+            - name: hf-cache
+              mountPath: /tmp/huggingface
+            - name: shared-media
+              mountPath: /tmp
+            - name: gdinoconfig
+              mountPath: /opt/nvidia/nv-cv-event-detector/gdinoconfig_grpc.txt
+              subPath: gdinoconfig_grpc.txt
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.cvEventDetector.apiPort }}
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 50
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.cvEventDetector.apiPort }}
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 50
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.cvEventDetector.shmSize }}
+        - name: ngc-model-cache
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-via-ngc-model-cache
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-via-hf-cache
+        - name: shared-media
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-vss-shared-media
+        - name: gdinoconfig
+          configMap:
+            name: {{ $fullname }}-gdinoconfig

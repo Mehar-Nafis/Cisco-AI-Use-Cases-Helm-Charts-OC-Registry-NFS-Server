@@ -1,0 +1,241 @@
+---
+# Patch for chain-server retriever.py:
+# - Skips the expensive _get_categories() LLM calls (was taking 40+ seconds)
+# - Passes user query directly to catalog retriever for vector search
+# - Removes unnecessary entity/category extraction overhead
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chain-retriever-patch
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+data:
+  retriever.py: |
+    # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+
+    from .agenttypes import State
+    from openai import OpenAI
+    import os
+    import json
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    import sys
+    from typing import Tuple, List, Dict
+    import asyncio
+    import logging
+    import time
+    import re
+
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        stream=sys.stdout
+    )
+
+
+    class RetrieverAgent():
+        def __init__(self, config) -> None:
+            logging.info(f"RetrieverAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
+            self.llm_name = config.llm_name
+            self.llm_port = config.llm_port
+            self.catalog_retriever_url = config.retriever_port
+            self.k_value = config.top_k_retrieve
+            self.categories = config.categories
+            self.model = OpenAI(base_url=config.llm_port, api_key=os.environ["LLM_API_KEY"])
+            logging.info(f"RetrieverAgent.__init__() | Initialization complete")
+
+        async def invoke(self, state: State, verbose: bool = True) -> State:
+            logging.info(f"RetrieverAgent.invoke() | Starting with query: {state.query}")
+
+            # Guard against cross-user context bleed. The frontend reuses a
+            # single chat user_id across browser windows, so memory loaded at
+            # the top of the graph may belong to a different policy user.
+            # If the stored USER_ID tag disagrees with the current
+            # policy_user_id, wipe the context so the retriever rebuilds it
+            # from the correct user's documents.
+            if state.policy_user_id and state.context:
+                stored = re.search(r"USER_ID:\s*(\S+)", state.context)
+                if stored and stored.group(1) != state.policy_user_id:
+                    logging.info(
+                        f"RetrieverAgent.invoke() | policy_user_id switch detected "
+                        f"(stored={stored.group(1)}, current={state.policy_user_id}); "
+                        f"clearing stale context"
+                    )
+                    state.context = ""
+
+            # Check for pending chat notifications first
+            if state.policy_user_id:
+                try:
+                    notification_response = requests.get(
+                        f"http://notification-agent:8015/get-notification/{state.policy_user_id}",
+                        timeout=5
+                    )
+                    if notification_response.status_code == 200:
+                        notification_data = notification_response.json()
+                        if notification_data.get("has_notification"):
+                            state.response = notification_data["message"]
+                            state.context = f"{state.context}\n{state.response}"
+                            return state
+                except Exception as e:
+                    logging.error(f"Error checking notifications: {e}")
+
+            # Check if user wants to change profile information
+            profile_change_pattern = r"\b(change|update|modify)\s+.*\b(email|mail\s*id|mail|password|phone|address)\b"
+            is_profile_change = re.search(profile_change_pattern, state.query, re.IGNORECASE)
+
+            if is_profile_change:
+                logging.info(f"RetrieverAgent.invoke() | Profile change request detected: {is_profile_change.groups()}")
+                change_type = is_profile_change.group(2)
+                new_value = ""
+
+                if "email" in change_type.lower() or "mail" in change_type.lower():
+                    email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", state.query)
+                    if email_match:
+                        new_value = email_match.group(0)
+                    change_type = "email"
+                elif "password" in change_type.lower():
+                    password_match = re.search(r"\bto\s+([\w@#$%^&*!]+)", state.query, re.IGNORECASE)
+                    if password_match:
+                        new_value = password_match.group(1)
+                    else:
+                        alt_match = re.search(r"password\s+([\w@#$%^&*!]+)", state.query, re.IGNORECASE)
+                        if alt_match:
+                            new_value = alt_match.group(1)
+
+                if new_value:
+                    try:
+                        user_response = requests.get(f"http://user-management:8014/get-user/{state.policy_user_id}", timeout=5)
+                        user_email = "lavanya@crimsoncloud.in"
+                        if user_response.status_code == 200:
+                            user_data = user_response.json()
+                            user_email = user_data.get("email", user_email)
+
+                        response = requests.post("http://notification-agent:8015/send-confirmation", json={
+                            "user_email": user_email,
+                            "user_id": state.policy_user_id,
+                            "change_type": change_type,
+                            "new_value": new_value
+                        }, timeout=10)
+
+                        if response.status_code == 200:
+                            state.response = f"An email has been sent to your registered email address ({user_email}). Please check your email and confirm the {change_type} change to {new_value}."
+                        else:
+                            state.response = "Unable to send confirmation email. Please try again later."
+                    except Exception as e:
+                        logging.error(f"Error calling notification agent: {e}")
+                        state.response = "Unable to process profile change request. Please try again later."
+                else:
+                    state.response = f"Please specify the new {change_type} you want to change to."
+
+                state.context = f"{state.context}\n{state.response}"
+                return state
+
+            # Check if user is asking about "my policy" without providing user ID
+            my_policy_pattern = r"\b(my|mine)\s+(policy|policies|insurance|coverage)\b"
+            is_personal_query = re.search(my_policy_pattern, state.query, re.IGNORECASE)
+
+            if is_personal_query and not state.policy_user_id:
+                state.response = "To access your specific policy information, please provide your user ID (e.g., user101, user202, user303)."
+                state.context = f"{state.context}\n{state.response}"
+                return state
+
+            if state.policy_user_id:
+                logging.info(f"RetrieverAgent.invoke() | Using policy_user_id: {state.policy_user_id}")
+
+            k = self.k_value
+
+            # OPTIMIZATION: Skip expensive LLM-based category extraction.
+            # Use the user's query directly for vector search — this saves ~40 seconds
+            # of unnecessary LLM calls per request.
+            entities = [state.query]
+            categories = []
+
+            logging.info(f"RetrieverAgent.invoke() | Using direct query for retrieval (skipping _get_categories LLM calls)")
+            logging.info(f"RetrieverAgent.invoke() | entities: {entities}")
+
+            # Query the catalog retriever service
+            start = time.monotonic()
+            try:
+                retry_strategy = Retry(
+                    total=3,
+                    status_forcelist=[422, 429, 500, 502, 503, 504],
+                    allowed_methods=["POST"],
+                    backoff_factor=1
+                )
+
+                adapter = HTTPAdapter(max_retries=retry_strategy)
+                session = requests.Session()
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+
+                image = state.image
+
+                if image:
+                    logging.info(f"RetrieverAgent.invoke() | /query/image -- getting response")
+                    response = session.post(
+                        f"{self.catalog_retriever_url}/query/image",
+                        json={
+                            "text": entities,
+                            "image_base64": image,
+                            "categories": categories,
+                            "k": k,
+                            "user_id": state.policy_user_id
+                        },
+                        timeout=30
+                    )
+                else:
+                    logging.info(f"RetrieverAgent.invoke() | /query/text -- getting response")
+                    response = session.post(
+                        f"{self.catalog_retriever_url}/query/text",
+                        json={
+                            "text": entities,
+                            "categories": categories,
+                            "k": k,
+                            "user_id": state.policy_user_id
+                        },
+                        timeout=30
+                    )
+
+                response.raise_for_status()
+                results = response.json()
+
+                if results["texts"]:
+                    products = []
+                    retrieved_dict = {}
+                    for text, name, img, sim in zip(results["texts"], results["names"], results["images"], results["similarities"]):
+                        cleaned_text = text.replace(name, "").strip()
+                        if cleaned_text:
+                            products.append(cleaned_text)
+                        retrieved_dict[name] = img
+                        logging.info(f"RetrieverAgent.invoke() | Retrieved: {name} (similarity: {sim})")
+
+                    if products:
+                        context_content = "\n".join(products)
+                        state.context = f"{state.context}\n{context_content}"
+
+                    state.response = "Documents retrieved for processing."
+                    state.retrieved = retrieved_dict
+                else:
+                    if state.policy_user_id:
+                        state.response = f"No relevant policy information found for user {state.policy_user_id}."
+                    else:
+                        state.response = "I couldn't find relevant information."
+                    state.context = f"{state.context}\n{state.response}"
+
+                logging.info(f"RetrieverAgent.invoke() | Retriever returned context.")
+
+            except requests.exceptions.RequestException as e:
+                if verbose:
+                    logging.error(f"RetrieverAgent.invoke() | Error querying catalog retriever service: {str(e)}")
+                state.response = f"I can only access documents for user {state.policy_user_id}. No relevant information found."
+                state.context = f"{state.context}\n{state.response}"
+
+            end = time.monotonic()
+            state.timings["retriever_retrieval"] = end - start
+
+            logging.info(f"RetrieverAgent.invoke() | Returning final state with response.")
+            return state

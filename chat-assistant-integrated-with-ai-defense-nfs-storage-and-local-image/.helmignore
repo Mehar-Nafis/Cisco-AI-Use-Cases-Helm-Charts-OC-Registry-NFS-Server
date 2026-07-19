@@ -1,0 +1,20 @@
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*.bak
+*.tmp
+*~
+
+# IDE
+.idea/
+.vscode/
+
+# Misc
+*.tgz
+*.log

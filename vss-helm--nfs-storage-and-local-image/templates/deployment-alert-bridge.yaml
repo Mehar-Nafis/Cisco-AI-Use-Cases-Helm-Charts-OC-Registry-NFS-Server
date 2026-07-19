@@ -1,0 +1,101 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "alert-bridge" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.primaryAffinity" . | nindent 6 }}
+      {{- include "vss.podSecurityContext" . | nindent 6 }}
+      initContainers:
+        # Wait for Redis before starting
+        - name: wait-for-redis
+          image: redis:alpine
+          securityContext:
+            {{ include "vss.containerSecurityContext" . | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - until redis-cli -h {{ $fullname }}-redis -p {{ .Values.redis.port }} ping; do echo "waiting for redis"; sleep 3; done
+        # Wait for via-server before starting
+        - name: wait-for-via-server
+          image: curlimages/curl:latest
+          securityContext:
+            {{ include "vss.containerSecurityContext" . | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - until curl -sf http://{{ $fullname }}-via-server:{{ .Values.viaServer.backendPort }}/health/live; do echo "waiting for via-server"; sleep 10; done
+      containers:
+        - name: alert-bridge
+          image: {{ .Values.alertBridge.image }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "vss.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.alertBridge.fastapiPort }}
+              name: fastapi
+            - containerPort: {{ .Values.alertBridge.healthPort }}
+              name: health
+          env:
+            - name: FASTAPI_PORT
+              value: {{ .Values.alertBridge.fastapiPort | quote }}
+            - name: ALERT_REVIEW_MEDIA_BASE_DIR
+              value: "/tmp"
+            - name: STORAGE_MODULE_ENDPOINT
+              value: "http://{{ $fullname }}-storage-ms:{{ .Values.storageMs.httpPort }}"
+            - name: VSS_BASE_URL
+              value: "http://{{ $fullname }}-via-server:{{ .Values.viaServer.backendPort }}"
+          resources:
+            {{- toYaml .Values.alertBridge.resources | nindent 12 }}
+          volumeMounts:
+            - name: alert-bridge-config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+            - name: alert-bridge-config
+              mountPath: /app/alert_request_defaults.yaml
+              subPath: alert_request_defaults.yaml
+            - name: shared-media
+              mountPath: /tmp
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import urllib.request; urllib.request.urlopen('http://localhost:{{ .Values.alertBridge.fastapiPort }}/health', timeout=5)"
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import urllib.request; urllib.request.urlopen('http://localhost:{{ .Values.alertBridge.fastapiPort }}/health', timeout=5)"
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: alert-bridge-config
+          configMap:
+            name: {{ $fullname }}-alert-bridge-config
+        - name: shared-media
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-vss-shared-media

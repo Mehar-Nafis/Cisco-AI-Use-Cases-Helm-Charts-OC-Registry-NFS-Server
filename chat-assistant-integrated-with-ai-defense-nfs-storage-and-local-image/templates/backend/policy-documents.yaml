@@ -1,0 +1,19 @@
+---
+# Policy documents ConfigMap, built from the chart's docs/ directory.
+# Replaces the manually created ConfigMap:
+#   oc create configmap policy-documents --from-file=... -n chat-assistant
+# Keys must be valid ConfigMap keys ([-._a-zA-Z0-9]) and must exactly match
+# the filenames listed in docs/document-metadata.json, otherwise ingestion
+# falls back to filename-regex user_id extraction (or tags the doc "global").
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: policy-documents
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+data:
+  document-metadata.json: |-
+{{ .Files.Get "docs/document-metadata.json" | indent 4 }}
+binaryData:
+{{ (.Files.Glob "docs/*.pdf").AsSecrets | indent 2 }}

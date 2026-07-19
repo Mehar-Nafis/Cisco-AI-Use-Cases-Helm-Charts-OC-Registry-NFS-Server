@@ -1,0 +1,124 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "via-server" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.primaryAffinity" . | nindent 6 }}
+      hostIPC: {{ .Values.viaServer.hostIPC }}
+      {{ include "vss.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: via-server
+          image: {{ .Values.viaServer.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.viaServer.backendPort }}
+              name: backend
+            - containerPort: {{ .Values.viaServer.frontendPort }}
+              name: frontend
+          env:
+            - name: BACKEND_PORT
+              value: {{ .Values.viaServer.backendPort | quote }}
+            - name: FRONTEND_PORT
+              value: {{ .Values.viaServer.frontendPort | quote }}
+            - name: DISABLE_CA_RAG
+              value: "true"
+            - name: DISABLE_FRONTEND
+              value: "true"
+            - name: DISABLE_GUARDRAILS
+              value: "true"
+            - name: DISABLE_CV_PIPELINE
+              value: "true"
+            - name: MODEL_PATH
+              value: {{ .Values.viaServer.modelPath | quote }}
+            - name: VLM_MODEL_TO_USE
+              value: {{ .Values.viaServer.vlmModelToUse | quote }}
+            - name: VLLM_GPU_MEMORY_UTILIZATION
+              value: {{ .Values.viaServer.vllmGpuMemoryUtilization | quote }}
+            - name: VLM_MAX_MODEL_LEN
+              value: {{ .Values.viaServer.vlmMaxModelLen | quote }}
+            - name: VLM_INPUT_WIDTH
+              value: {{ .Values.viaServer.vlmInputWidth | quote }}
+            - name: VLM_INPUT_HEIGHT
+              value: {{ .Values.viaServer.vlmInputHeight | quote }}
+            - name: VLM_DEFAULT_NUM_FRAMES_PER_CHUNK
+              value: {{ .Values.viaServer.vlmDefaultNumFramesPerChunk | quote }}
+            - name: VLM_SYSTEM_PROMPT
+              value: {{ .Values.viaServer.vlmSystemPrompt | quote }}
+            - name: VSS_LOG_LEVEL
+              value: {{ .Values.viaServer.vssLogLevel | quote }}
+            - name: VSS_EXTRA_ARGS
+              value: {{ .Values.viaServer.vssExtraArgs | quote }}
+            - name: ALERT_REVIEW_MEDIA_BASE_DIR
+              value: "/tmp"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: {{ .Values.global.nvidiaVisibleDevices | quote }}
+            - name: NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-credentials
+                  key: NGC_API_KEY
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-credentials
+                  key: HF_TOKEN
+            - name: NGC_MODEL_CACHE
+              value: "/tmp/ngc_cache"
+          resources:
+            {{- toYaml .Values.viaServer.resources | nindent 12 }}
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: ngc-model-cache
+              mountPath: /root/.via/ngc_model_cache
+            - name: hf-cache
+              mountPath: /tmp/huggingface
+            - name: shared-media
+              mountPath: /tmp
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: {{ .Values.viaServer.backendPort }}
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 25
+          readinessProbe:
+            httpGet:
+              path: /health/live
+              port: {{ .Values.viaServer.backendPort }}
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 25
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.viaServer.shmSize }}
+        - name: ngc-model-cache
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-via-ngc-model-cache
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-via-hf-cache
+        - name: shared-media
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-vss-shared-media

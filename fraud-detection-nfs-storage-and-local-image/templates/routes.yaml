@@ -1,0 +1,74 @@
+{{- if .Values.routes.frontend.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: frontend
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "frontend") | nindent 4 }}
+spec:
+  {{- if .Values.routes.frontend.host }}
+  host: {{ .Values.routes.frontend.host }}
+  {{- end }}
+  to:
+    kind: Service
+    name: frontend
+    weight: 100
+  port:
+    targetPort: 3000
+  {{- with .Values.routes.frontend.tls }}
+  tls:
+    termination: {{ .termination }}
+    insecureEdgeTerminationPolicy: {{ .insecureEdgeTerminationPolicy }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.routes.backend.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: backend
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "backend") | nindent 4 }}
+spec:
+  {{- if .Values.routes.backend.host }}
+  host: {{ .Values.routes.backend.host }}
+  {{- end }}
+  to:
+    kind: Service
+    name: backend
+    weight: 100
+  port:
+    targetPort: 8000
+  {{- with .Values.routes.backend.tls }}
+  tls:
+    termination: {{ .termination }}
+    insecureEdgeTerminationPolicy: {{ .insecureEdgeTerminationPolicy }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.routes.nimLlm.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: nim-llm
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "nim-llm") | nindent 4 }}
+spec:
+  {{- if .Values.routes.nimLlm.host }}
+  host: {{ .Values.routes.nimLlm.host }}
+  {{- end }}
+  to:
+    kind: Service
+    name: nim-llm
+    weight: 100
+  port:
+    targetPort: 8000
+  {{- with .Values.routes.nimLlm.tls }}
+  tls:
+    termination: {{ .termination }}
+    insecureEdgeTerminationPolicy: {{ .insecureEdgeTerminationPolicy }}
+  {{- end }}
+{{- end }}

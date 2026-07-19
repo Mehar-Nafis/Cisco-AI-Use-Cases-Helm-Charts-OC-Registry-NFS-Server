@@ -1,0 +1,93 @@
+---
+# MinIO – StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: minio
+spec:
+  serviceName: minio
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      containers:
+        - name: minio
+          image: {{ .Values.images.minio }}
+          command: ["minio", "server", "/minio_data", "--console-address", ":9001"]
+          ports:
+            - containerPort: 9000
+              name: api
+            - containerPort: 9001
+              name: console
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: MINIO_ROOT_PASSWORD
+          resources:
+            {{- include "chat-assistance.resources.infra" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: minio-data
+              mountPath: /minio_data
+  volumeClaimTemplates:
+    - metadata:
+        name: minio-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.storage.storageClassName }}
+        storageClassName: {{ .Values.storage.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.minio.size }}
+---
+# MinIO – Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 9000
+      targetPort: 9000
+      name: api
+    - port: 9001
+      targetPort: 9001
+      name: console
+  selector:
+    app: minio

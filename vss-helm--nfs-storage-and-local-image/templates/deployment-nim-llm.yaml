@@ -1,0 +1,98 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "nim-llm" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      imagePullSecrets:
+        # Was "ngc-secret" — that secret is never created anywhere in this
+        # chart. templates/secret.yaml actually creates
+        # "{{ include "vss.fullname" . }}-ngc-registry" (conditional on
+        # global.ngcApiKey being set). The old name silently broke image
+        # pulls for this component regardless of any air-gap fix.
+        - name: {{ $fullname }}-ngc-registry
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.secondaryAffinity" . | nindent 6 }}
+      {{- include "vss.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: nim-llm
+          securityContext:
+            {{- include "vss.containerSecurityContext" . | nindent 12 }}
+          image: {{ .Values.nimLlm.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.nimLlm.containerPort }}
+              name: http
+          env:
+            {{- if .Values.nimLlm.localModelPath }}
+            # Points nim_llm_sdk.hub.ngc_injector.inject_ngc_hub at an
+            # already-downloaded local snapshot dir (under nim-model-cache's
+            # mount at .Values.nimLlm.modelDirectory, default /models) —
+            # takes the early branch that loads straight from disk, skipping
+            # the manifest/NGC profile lookup entirely. Confirmed (on this
+            # same NIM image, meta/llama-3.1-8b-instruct:1.8.6, in the
+            # insurguard chart) by reading inject_ngc_hub's source directly
+            # out of a running pod. Find the actual snapshot path by
+            # inspecting the nim-model-cache PVC once it's warm.
+            - name: NIM_MODEL_NAME
+              value: {{ .Values.nimLlm.localModelPath | quote }}
+            {{- end }}
+            - name: NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-credentials
+                  key: NGC_API_KEY
+            - name: UCX_TLS
+              value: "tcp"
+            - name: NCCL_IB_DISABLE
+              value: "1"
+          resources:
+            {{- toYaml .Values.nimLlm.resources | nindent 12 }}
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: nim-model-cache
+              mountPath: {{ default "/models" .Values.nimLlm.modelDirectory }}
+          livenessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import requests; requests.get('http://localhost:{{ .Values.nimLlm.containerPort }}/v1/health/ready')"
+            initialDelaySeconds: 900
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 100
+          readinessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import requests; requests.get('http://localhost:{{ .Values.nimLlm.containerPort }}/v1/health/ready')"
+            initialDelaySeconds: 900
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 100
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.nimLlm.shmSize }}
+        - name: nim-model-cache
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-nim-model-cache

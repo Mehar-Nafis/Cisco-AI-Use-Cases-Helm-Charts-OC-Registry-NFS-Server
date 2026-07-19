@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+data:
+  init_db.sql: |
+    -- PostgreSQL database dump
+    SET statement_timeout = 0;
+    SET lock_timeout = 0;
+    SET idle_in_transaction_session_timeout = 0;
+    SET client_encoding = 'UTF8';
+    SET standard_conforming_strings = on;
+    SELECT pg_catalog.set_config('search_path', '', false);
+    SET check_function_bodies = false;
+    SET xmloption = content;
+    SET client_min_messages = warning;
+    SET row_security = off;
+
+    CREATE SCHEMA IF NOT EXISTS insurance;
+    ALTER SCHEMA insurance OWNER TO insurance_user;
+
+    SET default_tablespace = '';
+    SET default_table_access_method = heap;
+
+    CREATE TABLE IF NOT EXISTS insurance.claim_events (
+        event_id integer NOT NULL,
+        claim_id text NOT NULL,
+        event_type text,
+        event_note text,
+        created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE insurance.claim_events OWNER TO insurance_user;
+
+    CREATE SEQUENCE IF NOT EXISTS insurance.claim_events_event_id_seq
+        AS integer START WITH 1 INCREMENT BY 1
+        NO MINVALUE NO MAXVALUE CACHE 1;
+    ALTER TABLE insurance.claim_events_event_id_seq OWNER TO insurance_user;
+    ALTER SEQUENCE insurance.claim_events_event_id_seq OWNED BY insurance.claim_events.event_id;
+
+    CREATE TABLE IF NOT EXISTS insurance.claims (
+        claim_id text NOT NULL,
+        user_id text NOT NULL,
+        policy_id text,
+        claim_amount numeric(10,2),
+        claim_reason character varying(200),
+        claim_date date,
+        status character varying(20)
+    );
+    ALTER TABLE insurance.claims OWNER TO insurance_user;
+
+    CREATE TABLE IF NOT EXISTS insurance.policies (
+        policy_id text NOT NULL,
+        policy_type text NOT NULL,
+        insurer text NOT NULL,
+        is_active boolean DEFAULT true,
+        created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    );
+    ALTER TABLE insurance.policies OWNER TO insurance_user;
+
+    CREATE TABLE IF NOT EXISTS insurance.user_policies (
+        user_id text NOT NULL,
+        policy_id text NOT NULL,
+        role text DEFAULT 'PRIMARY'::text,
+        start_date date,
+        end_date date
+    );
+    ALTER TABLE insurance.user_policies OWNER TO insurance_user;
+
+    ALTER TABLE ONLY insurance.claim_events
+        ALTER COLUMN event_id SET DEFAULT nextval('insurance.claim_events_event_id_seq'::regclass);
+
+    -- Seed data
+    INSERT INTO insurance.policies (policy_id, policy_type, insurer, is_active) VALUES
+        ('CAR-ABC-2025-000101', 'CAR',    'State Farm', true),
+        ('HLTH-ABC-2025-000202','HEALTH', 'Blue Cross', true),
+        ('HOME-ABC-2025-000303','HOME',   'Allstate',   true),
+        ('POL004',              'CAR',    'Geico',      true)
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO insurance.claims (claim_id, user_id, policy_id, claim_amount, claim_reason, claim_date, status) VALUES
+        ('CLM001','user101','CAR-ABC-2025-000101', 2500.00,'Car accident repair',    '2024-03-15','Approved'),
+        ('CLM002','user101','CAR-ABC-2025-000101',  800.00,'Windshield replacement', '2024-06-20','Paid'),
+        ('CLM003','user202','HLTH-ABC-2025-000202',1500.00,'Emergency room visit',   '2024-02-10','Approved'),
+        ('CLM004','user303','HOME-ABC-2025-000303',5000.00,'Water damage repair',    '2024-04-05','Processing')
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO insurance.user_policies (user_id, policy_id, role, start_date, end_date) VALUES
+        ('user101','CAR-ABC-2025-000101', 'PRIMARY','2025-04-15','2026-04-14'),
+        ('user202','HLTH-ABC-2025-000202','PRIMARY','2025-01-01','2025-12-31'),
+        ('user303','HOME-ABC-2025-000303','PRIMARY','2025-03-20','2026-03-19')
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO insurance.claim_events (claim_id, event_type, event_note) VALUES
+        ('CLM001','SUBMITTED','Claim submitted with photos'),
+        ('CLM001','REVIEWED', 'Reviewed by adjuster'),
+        ('CLM001','APPROVED', 'Approved for payment'),
+        ('CLM002','SUBMITTED','Windshield claim submitted'),
+        ('CLM002','APPROVED', 'Approved and paid'),
+        ('CLM003','SUBMITTED','Emergency room claim'),
+        ('CLM003','APPROVED', 'Medical claim approved'),
+        ('CLM004','SUBMITTED','Water damage claim with documentation')
+    ON CONFLICT DO NOTHING;
+
+    -- Constraints
+    ALTER TABLE ONLY insurance.claim_events
+        ADD CONSTRAINT claim_events_pkey PRIMARY KEY (event_id);
+    ALTER TABLE ONLY insurance.claims
+        ADD CONSTRAINT claims_pkey PRIMARY KEY (claim_id);
+    ALTER TABLE ONLY insurance.policies
+        ADD CONSTRAINT policies_pkey PRIMARY KEY (policy_id);
+    ALTER TABLE ONLY insurance.user_policies
+        ADD CONSTRAINT user_policies_pkey PRIMARY KEY (user_id, policy_id);
+
+    ALTER TABLE ONLY insurance.claim_events
+        ADD CONSTRAINT claim_events_claim_id_fkey
+        FOREIGN KEY (claim_id) REFERENCES insurance.claims(claim_id);
+    ALTER TABLE ONLY insurance.claims
+        ADD CONSTRAINT claims_policy_id_fkey
+        FOREIGN KEY (policy_id) REFERENCES insurance.policies(policy_id);
+    ALTER TABLE ONLY insurance.user_policies
+        ADD CONSTRAINT user_policies_policy_id_fkey
+        FOREIGN KEY (policy_id) REFERENCES insurance.policies(policy_id);
+
+    SELECT pg_catalog.setval('insurance.claim_events_event_id_seq', 8, true);

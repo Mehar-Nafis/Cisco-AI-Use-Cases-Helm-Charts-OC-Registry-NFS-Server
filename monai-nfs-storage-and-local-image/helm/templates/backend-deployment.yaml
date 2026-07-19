@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monai-backend
+  labels:
+    app: monai-backend
+ 
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+ 
+  selector:
+    matchLabels:
+      app: monai-backend
+ 
+  template:
+    metadata:
+      labels:
+        app: monai-backend
+ 
+    spec:
+ 
+      {{- $ns := .Values.backend.nodeSelector | default .Values.global.nodeSelector }}
+      {{- if $ns }}
+      nodeSelector:
+{{ toYaml $ns | indent 8 }}
+      {{- end }}
+
+      {{- $tol := .Values.backend.tolerations | default .Values.global.tolerations }}
+      {{- if $tol }}
+      tolerations:
+{{ toYaml $tol | indent 8 }}
+      {{- end }}
+ 
+      initContainers:
+        - name: wait-for-models
+          image: "registry.access.redhat.com/ubi8/ubi:latest"
+          imagePullPolicy: IfNotPresent
+ 
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for model files to be uploaded to the PVC..."
+              while [ ! -f {{ .Values.backend.env.ckptPath }} ]; do
+                echo "Model not found. Please run 'oc rsync ./outputs/ <pod-name>:/app/outputs/ --no-perms' in a separate terminal."
+                sleep 10
+              done
+              echo "Model found! Starting backend..."
+ 
+          # ✅ FIX: prevent OOM during oc cp
+          resources:
+{{ toYaml .Values.backend.initResources | indent 12 }}
+ 
+          volumeMounts:
+            - name: outputs-volume
+              mountPath: /app/outputs
+ 
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+ 
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+ 
+          env:
+            # Override the image's baked-in NVIDIA_VISIBLE_DEVICES=void so the
+            # NVIDIA container runtime injects the GPU allocated by the device plugin.
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "compute,utility"
+            - name: MPLCONFIGDIR
+              value: /tmp/matplotlib
+            - name: CKPT_PATH
+              value: {{ .Values.backend.env.ckptPath }}
+            - name: VAL_LOADER_PATH
+              value: {{ .Values.backend.env.valLoaderPath }}
+            - name: TEMP_DIR
+              value: {{ .Values.backend.env.tempDir }}
+ 
+          resources:
+{{ toYaml .Values.backend.resources | indent 12 }}
+ 
+          volumeMounts:
+            - name: outputs-volume
+              mountPath: /app/outputs
+            - name: heatmaps-volume
+              mountPath: /app/static/heatmaps
+ 
+      volumes:
+        - name: outputs-volume
+          persistentVolumeClaim:
+            claimName: monai-outputs-pvc
+ 
+        - name: heatmaps-volume
+          emptyDir: {}

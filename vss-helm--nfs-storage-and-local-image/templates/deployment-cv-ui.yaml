@@ -1,0 +1,74 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "cv-ui" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.primaryAffinity" . | nindent 6 }}
+      {{- include "vss.podSecurityContext" . | nindent 6 }}
+      initContainers:
+        - name: wait-for-cv-detector
+          securityContext:
+            {{- include "vss.containerSecurityContext" . | nindent 12 }}
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - until curl -sf http://{{ $fullname }}-nv-cv-event-detector:{{ .Values.cvEventDetector.apiPort }}/health; do echo "waiting for cv-event-detector"; sleep 10; done
+      containers:
+        - name: cv-ui
+          image: {{ .Values.cvUi.image }}
+          imagePullPolicy: IfNotPresent
+          stdin: true
+          tty: true
+          securityContext:
+            {{- include "vss.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.cvUi.port }}
+              name: gradio
+          env:
+            - name: BACKEND_IP
+              value: "{{ $fullname }}-via-server"
+            - name: BACKEND_PORT
+              value: {{ .Values.viaServer.backendPort | quote }}
+            - name: NV_CV_EVENT_DETECTOR_API_URL
+              value: "http://{{ $fullname }}-nv-cv-event-detector:{{ .Values.cvEventDetector.apiPort }}"
+            - name: NV_VST_API_URL
+              value: "http://{{ $fullname }}-api-gateway:{{ .Values.apiGateway.port }}/api/storage"
+            - name: NV_ENABLE_VST
+              value: {{ .Values.cvUi.enableVst | quote }}
+            - name: NV_ENABLE_ALERTBRIDGE
+              value: {{ .Values.cvUi.enableAlertBridge | quote }}
+            - name: NV_ALERTBRIDGE_API_BASE
+              value: "http://{{ $fullname }}-api-gateway:{{ .Values.apiGateway.port }}/api/alertbridge"
+            - name: FILTERED_CLIP_PATH
+              value: "/tmp"
+            - name: NV_SERIALIZE_ALERT_VERIFICATION
+              value: {{ .Values.cvUi.serializeAlertVerification | quote }}
+            - name: VLM_MODEL
+              value: {{ .Values.cvUi.vlmModel | quote }}
+          resources:
+            {{- toYaml .Values.cvUi.resources | nindent 12 }}
+          volumeMounts:
+            - name: shared-media
+              mountPath: /tmp
+      volumes:
+        - name: shared-media
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-vss-shared-media

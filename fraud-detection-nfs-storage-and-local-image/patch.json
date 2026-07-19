@@ -1,0 +1,12 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/initContainers/1/command",
+    "value": [
+      "/bin/sh",
+      "-c",
+      "pip install --target /extra-python --index-url https://download.pytorch.org/whl/cu128 torch==2.6.0 && pip install --target /extra-python --extra-index-url https://download.pytorch.org/whl/cu128 torch-geometric==2.6.0 xgboost==2.1.4 captum==0.7.0 matplotlib --no-cache-dir"
+    ]
+  }
+]
+

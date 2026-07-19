@@ -1,0 +1,3 @@
+# nginx-proxy has been removed.
+# External access is handled entirely by OpenShift Routes in route.yaml
+# using HAProxy path-based routing — no nginx middleman needed.

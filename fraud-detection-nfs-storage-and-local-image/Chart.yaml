@@ -1,0 +1,9 @@
+apiVersion: v2
+name: fraud-detection
+description: Real-Time Credit Card Fraud Detection System with Morpheus AI and Triton
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Karthik Siddu
+    email: karthik@cisco.com

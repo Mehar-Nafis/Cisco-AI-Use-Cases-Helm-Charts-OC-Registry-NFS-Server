@@ -1,0 +1,66 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "redis" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  serviceName: {{ $fullname }}-{{ $component }}
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.secondaryAffinity" . | nindent 6 }}
+      {{- include "vss.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: redis
+          securityContext:
+            {{- include "vss.containerSecurityContext" . | nindent 12 }}
+          image: {{ .Values.redis.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.redis.port }}
+              name: redis
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          {{- include "vss.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.redisData.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.redisData.size }}
+        {{- include "vss.storageClass" (dict "global" .Values.persistence.storageClass "local" .Values.persistence.redisData.storageClass) | nindent 8 }}

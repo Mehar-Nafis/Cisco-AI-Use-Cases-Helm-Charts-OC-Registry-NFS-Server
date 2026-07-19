@@ -1,0 +1,25 @@
+---
+# Shared config files for services that expect /app/shared/configs/<service>/
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-configs
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+data:
+  # catalog-retriever: mounted at /app/shared/configs/catalog_retriever/config.yaml
+  catalog_retriever_config.yaml: |
+    {{- .Values.sharedConfigs.catalogRetriever | nindent 4 }}
+
+  # memory-retriever: mounted at /app/shared/configs/memory_retriever/config.yaml
+  memory_retriever_config.yaml: |
+    {{- .Values.sharedConfigs.memoryRetriever | nindent 4 }}
+
+  # chain-server: mounted at /app/shared/configs/chain_server/config.yaml
+  chain_server_config.yaml: |
+    {{- .Values.sharedConfigs.chainServer | nindent 4 }}
+
+  # rails (NemoGuardrails): each key becomes a file under /app/shared/configs/rails/
+  config.yml: |
+    {{- .Values.sharedConfigs.rails.configYml | nindent 4 }}

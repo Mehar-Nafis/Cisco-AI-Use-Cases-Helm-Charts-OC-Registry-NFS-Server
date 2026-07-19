@@ -1,0 +1,75 @@
+# Default values for monai-chart.
+ 
+global:
+  suffix: ""
+
+  # Common node targeting applied to both backend and frontend.
+  # Override per-component via backend.nodeSelector / frontend.nodeSelector.
+  nodeSelector: {}
+
+  # Common tolerations applied to both backend and frontend.
+  tolerations: []
+ 
+backend:
+  replicaCount: 1
+ 
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/monai/monai
+    tag: backend-gpu
+    pullPolicy: IfNotPresent
+ 
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: "8Gi"
+      cpu: "4"
+    requests:
+      nvidia.com/gpu: 1
+      memory: "4Gi"
+      cpu: "2"
+ 
+  # ✅ NEW: init container resources (fix for exit 137)
+  initResources:
+    limits:
+      memory: "2Gi"
+      cpu: "1"
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+ 
+  # Optional: node targeting (leave empty by default)
+  nodeSelector: {}
+ 
+  # Optional: tolerations
+  tolerations: []
+ 
+  env:
+    ckptPath: /app/outputs/checkpoints/best_cxr_multilabel_13.pt
+    valLoaderPath: /app/outputs/val_samples_1.pkl
+    tempDir: /app/static/heatmaps
+ 
+frontend:
+  replicaCount: 1
+
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/monai/monai
+    tag: frontend
+    pullPolicy: IfNotPresent
+
+  resources:
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+
+  # Optional: node targeting (leave empty by default)
+  nodeSelector: {}
+
+  # Optional: tolerations
+  tolerations: []
+ 
+storage:
+  outputsClass: ""
+  outputsSize: 10Gi

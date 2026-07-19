@@ -1,0 +1,15 @@
+# =============================================================================
+# values-rtx.yaml – NVIDIA RTX PRO 6000 Blackwell Server Edition overrides
+# Usage: helm install chat-assistant . -f values.yaml -f values-rtx.yaml \
+#          -n chat-assistant --set ngc.apiKey=<YOUR_KEY>
+# =============================================================================
+
+nvidia:
+  kvCachePercent: "80"         # More VRAM available on Blackwell (96GB)
+  maxNumSeqs: "16"             # Higher concurrency with full dedicated GPU
+  streamingTokenChunkSize: "20"
+  enablePromptStreaming: "1"
+
+# Pin all pods to the RTX Blackwell shared node using GPU operator label
+nodeSelector:
+  nvidia.com/gpu.product: "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition-SHARED"

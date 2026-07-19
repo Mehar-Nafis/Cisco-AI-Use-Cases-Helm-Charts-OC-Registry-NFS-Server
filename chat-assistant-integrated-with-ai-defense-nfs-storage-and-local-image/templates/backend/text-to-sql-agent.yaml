@@ -1,0 +1,60 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: text-to-sql-agent
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: text-to-sql-agent
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: text-to-sql-agent
+  template:
+    metadata:
+      labels:
+        app: text-to-sql-agent
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      containers:
+        - name: text-to-sql-agent
+          image: {{ .Values.images.textToSqlAgent }}
+          ports:
+            - containerPort: 8017
+          env:
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+          resources:
+            {{- include "chat-assistance.resources.backend" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 8017
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8017
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: text-to-sql-agent
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 8017
+      targetPort: 8017
+  selector:
+    app: text-to-sql-agent

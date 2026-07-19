@@ -1,0 +1,89 @@
+---
+# Patch for rails main.py to expose top-level "content" key in responses.
+# NemoGuardrails returns {"response": [{"role": "assistant", "content": "..."}]}
+# but chain-server's graph.py expects {"content": "..."} at the top level.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rails-main-patch
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+data:
+  main.py: |
+    # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+
+    from fastapi import FastAPI, HTTPException
+    from rails import Rails
+    from pydantic import BaseModel
+    import logging
+    import time
+
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+
+    # Define the ContextUpdate data class
+    class QueryRequest(BaseModel):
+        user_id: int
+        query: str
+
+    # Create the FastAPI app
+    app = FastAPI()
+
+    rails = Rails().getGuardRails()
+
+    def _to_dict(obj):
+        """Coerce NemoGuardrails return values to a plain dict.
+        Newer versions return a GenerationResponse Pydantic model; older
+        versions return a dict. Handle both."""
+        if isinstance(obj, dict):
+            return obj
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()
+        if hasattr(obj, "dict"):
+            return obj.dict()
+        return {"response": obj}
+
+    def _extract_content(result, fallback: str) -> dict:
+        """Add top-level 'content' key from nested NemoGuardrails response."""
+        result = _to_dict(result)
+        response_list = result.get("response")
+        if response_list:
+            first = response_list[0]
+            if isinstance(first, str):
+                first = {"content": first}
+            else:
+                first = _to_dict(first)
+            result["content"] = first.get("content", fallback) if isinstance(first, dict) else fallback
+        else:
+            result["content"] = fallback
+        return result
+
+    @app.post("/rail/input/check")
+    async def check_input(request: QueryRequest):
+        result = await rails.call_input_content_rails(request.query)
+        return _extract_content(result, request.query)
+
+    @app.post("/rail/input/timing")
+    async def timing_input(request: QueryRequest):
+        start = time.monotonic()
+        response = await check_input(request)
+        end = time.monotonic()
+        logging.info(f"Guardrails | check_input | Time: {end - start}")
+        response["timings"] = [{"rails": end - start}, {"total": end - start}]
+        return response
+
+    @app.post("/rail/output/check")
+    async def check_output(request: QueryRequest):
+        result = await rails.call_output_content_rails(request.query)
+        return _extract_content(result, request.query)
+
+    @app.post("/rail/output/timing")
+    async def timing_output(request: QueryRequest):
+        start = time.monotonic()
+        response = await check_output(request)
+        end = time.monotonic()
+        logging.info(f"Guardrails | check_output | Time: {end - start}")
+        response["timings"] = [{"rails": end - start}, {"total": end - start}]
+        return response

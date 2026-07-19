@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "mongodb") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" (dict "component" "mongodb") | nindent 6 }}
+  serviceName: mongodb
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-detection.labels" . | nindent 8 }}
+        {{- include "fraud-detection.selectorLabels" (dict "component" "mongodb") | nindent 8 }}
+    spec:
+      {{- include "fraud-detection.nodeSelector" . | nindent 6 }}
+      {{- include "fraud-detection.imagePullSecrets" . | nindent 6 }}
+      {{- include "fraud-detection.podSecurityContext" . | nindent 6 }}
+      containers:
+      - name: mongodb
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.mongodb.repository }}:{{ .Values.images.mongodb.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        ports:
+        - containerPort: 27017
+          name: mongo
+        volumeMounts:
+        - name: mongodb-data
+          mountPath: /data/db
+        readinessProbe:
+          tcpSocket:
+            port: 27017
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 27017
+          initialDelaySeconds: 30
+          periodSeconds: 15
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: {{ .Values.persistence.mongodb }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+spec:
+  ports:
+  - port: 27017
+    targetPort: 27017
+  selector:
+    {{- include "fraud-detection.selectorLabels" (dict "component" "mongodb") | nindent 4 }}

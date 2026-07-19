@@ -1,0 +1,79 @@
+---
+# Patch for summarizer.py: replaces blocking LLM summarization (284s GPU call)
+# with simple truncation that keeps the most recent context.
+# The original LLM call held a NIM sequence slot for ~5 minutes after every query,
+# starving user-facing queries (planner + chatter) of GPU compute.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: summarizer-patch
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+data:
+  summarizer.py: |
+    # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+
+    from .agenttypes import State
+    import requests
+    import logging
+    import sys
+    import time
+
+
+    def setup_logging():
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            stream=sys.stdout
+        )
+
+
+    class SummaryAgent:
+        def __init__(self, config):
+            logging.info(f"SummaryAgent.__init__() | Initializing (truncation mode, no LLM)")
+            self.memory_length = config.memory_length
+            self.memory_port = config.memory_port
+            logging.info(f"SummaryAgent.__init__() | memory_length={self.memory_length}")
+
+        def invoke(self, state: State, verbose: bool = True) -> State:
+            logging.info(f"SummaryAgent.invoke() | Starting with query: {state.query}")
+            output_state = state
+            start = time.monotonic()
+
+            context = state.context or ""
+
+            if len(context) > self.memory_length:
+                logging.info(f"SummaryAgent.invoke() | Context ({len(context)} chars) exceeds memory_length ({self.memory_length}), truncating")
+
+                # Keep the most recent context (end of string) — this preserves
+                # the latest Q&A exchanges and retrieved policy details.
+                # Find a clean sentence boundary near the cut point to avoid
+                # splitting mid-sentence.
+                truncated = context[-self.memory_length:]
+                # Find first newline or period to start at a clean boundary
+                clean_start = -1
+                for sep in ['\n', '. ', '? ', '! ']:
+                    idx = truncated.find(sep)
+                    if idx != -1 and (clean_start == -1 or idx < clean_start):
+                        clean_start = idx
+                if clean_start > 0 and clean_start < len(truncated) // 2:
+                    truncated = truncated[clean_start:].lstrip('\n .?!')
+
+                output_state.context = truncated
+                logging.info(f"SummaryAgent.invoke() | Truncated context to {len(truncated)} chars")
+            else:
+                logging.info(f"SummaryAgent.invoke() | Context ({len(context)} chars) within memory_length — no truncation needed")
+
+            # Include policy_user_id in context if available
+            context_to_save = output_state.context
+            if hasattr(output_state, 'policy_user_id') and output_state.policy_user_id:
+                if f"USER_ID: {output_state.policy_user_id}" not in context_to_save:
+                    context_to_save = f"USER_ID: {output_state.policy_user_id}\n{context_to_save}"
+
+            requests.post(f"{self.memory_port}/user/{output_state.user_id}/context/replace", json={"new_context": context_to_save})
+
+            end = time.monotonic()
+            logging.info(f"SummaryAgent.invoke() | Completed in {end - start:.3f} seconds")
+            return output_state

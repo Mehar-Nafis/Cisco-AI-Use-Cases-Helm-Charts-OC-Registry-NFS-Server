@@ -1,0 +1,28 @@
+Thank you for installing {{ .Chart.Name }} v{{ .Chart.Version }} on OpenShift!
+
+---------------------------------------------------------------------------
+RELEASE: {{ .Release.Name }}   NAMESPACE: {{ .Values.namespace }}
+---------------------------------------------------------------------------
+
+▶  Check pod status:
+   oc get pods -n {{ .Values.namespace }}
+
+▶  Get the external Route hostname:
+   oc get route chat-assistance-route -n {{ .Values.namespace }} -o jsonpath='{.spec.host}'
+
+▶  To upgrade the chart (e.g. rolling update):
+   helm upgrade {{ .Release.Name }} <chart-path> -n {{ .Values.namespace }} --set ngc.apiKey=<YOUR_KEY>
+
+▶  To uninstall:
+   helm uninstall {{ .Release.Name }} -n {{ .Values.namespace }}
+
+---------------------------------------------------------------------------
+{{ if .Values.nvidia.enabled }}
+NVIDIA / NIM services are ENABLED.
+Each GPU workload requests {{ .Values.nvidia.gpuCount }} nvidia.com/gpu.
+Ensure your OpenShift nodes have NVIDIA GPU Operator installed and
+the nodes are labelled:  feature.node.kubernetes.io/pci-10de.present=true
+{{ else }}
+NVIDIA / NIM services are DISABLED (nvidia.enabled=false).
+Set --set nvidia.enabled=true to enable GPU workloads.
+{{ end -}}

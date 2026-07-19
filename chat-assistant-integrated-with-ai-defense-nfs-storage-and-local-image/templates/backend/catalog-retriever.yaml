@@ -1,0 +1,129 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-retriever
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: catalog-retriever
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: catalog-retriever
+  template:
+    metadata:
+      labels:
+        app: catalog-retriever
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      initContainers:
+        # catalog-retriever connects to Milvus and calls embedqa for embeddings on
+        # startup. On a fresh deploy those aren't ready yet (the embedqa NIM takes
+        # minutes to load), so without this gate the pod crash-loops a few times
+        # before settling. Wait for both before starting the main container.
+        - name: wait-for-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for milvus (tcp 19530)..."
+              until nc -z milvus 19530 2>/dev/null; do
+                echo "milvus not ready, sleeping 10s..."
+                sleep 10
+              done
+              echo "milvus is up. Waiting for embedqa to be ready..."
+              until wget -q -O /dev/null http://embedqa:8000/v1/health/ready 2>/dev/null; do
+                echo "embedqa not ready, sleeping 30s..."
+                sleep 30
+              done
+              echo "Dependencies ready, starting catalog-retriever."
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: catalog-retriever
+          image: {{ .Values.images.catalogRetriever }}
+          ports:
+            - containerPort: 8010
+          env:
+            - name: EMBED_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+            - name: MILVUS_HOST
+              value: "milvus"
+            - name: MILVUS_PORT
+              value: "19530"
+          resources:
+            {{- include "chat-assistance.resources.backend" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 8010
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8010
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 10
+          volumeMounts:
+            - name: catalog-config
+              mountPath: /app/shared/configs/catalog_retriever
+              readOnly: true
+            - name: policy-docs
+              mountPath: /app/shared/data
+              readOnly: true
+            # Patched main.py: loads document metadata from JSON
+            - name: catalog-main-patch
+              mountPath: /app/app/main.py
+              subPath: main.py
+              readOnly: true
+            # Patched retriever.py: accepts explicit user_id/document_type metadata
+            - name: catalog-retriever-patch
+              mountPath: /app/app/retriever.py
+              subPath: retriever.py
+              readOnly: true
+      volumes:
+        - name: catalog-config
+          configMap:
+            name: shared-configs
+            items:
+              - key: catalog_retriever_config.yaml
+                path: config.yaml
+        - name: policy-docs
+          configMap:
+            name: policy-documents
+        - name: catalog-main-patch
+          configMap:
+            name: catalog-main-patch
+        - name: catalog-retriever-patch
+          configMap:
+            name: catalog-retriever-patch
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-retriever
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 8010
+      targetPort: 8010
+  selector:
+    app: catalog-retriever

@@ -1,0 +1,136 @@
+{{- if and .Values.global.airGapped (gt (int .Values.gpu.nimCount) 0) (not .Values.nimLlm.localModelPath) (not .Values.ngcApiKey) }}
+{{ fail "nim-llm needs either nimLlm.localModelPath or ngcApiKey set when gpu.nimCount > 0 and global.airGapped is true. With neither, this Deployment references the ngc-secret Secret (see templates/secrets.yaml), which is only created when ngcApiKey is set — without it, the pod fails outright on a missing secret reference instead of a clear error at render time. localModelPath is the recommended fix: set it to the absolute in-container path (under NIM_CACHE_PATH=/tmp/nim-cache, now backed by the nim-cache PVC below instead of the previous emptyDir) of an already-downloaded HF-format model snapshot — see the NIM_MODEL_NAME comment below for the mechanism this assumes (best-effort: this image is a custom-tagged rebuild, cisco_fraud_detection:nim_llm, not confirmed nim_llm_sdk-based the way insurguard/vss-helm/chat-assistant's identical nvcr.io NIM images were). Set global.airGapped: false if you actually intend to rely on live NGC access instead." }}
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nim-cache
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.persistence.nimCache }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nim-hf-cache
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.persistence.nimHfCache }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nim-llm
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "nim-llm") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" (dict "component" "nim-llm") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-detection.labels" . | nindent 8 }}
+        {{- include "fraud-detection.selectorLabels" (dict "component" "nim-llm") | nindent 8 }}
+    spec:
+      {{- include "fraud-detection.nodeSelector" . | nindent 6 }}
+      {{- include "fraud-detection.imagePullSecrets" . | nindent 6 }}
+      {{- include "fraud-detection.podSecurityContext" . | nindent 6 }}
+      containers:
+      - name: nim-llm
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.nimLLM.repository }}:{{ .Values.images.nimLLM.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        env:
+        {{- if gt (int .Values.gpu.nimCount) 0 }}
+        - name: NGC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ngc-secret
+              key: NGC_API_KEY
+        {{- end }}
+        {{- if .Values.nimLlm.localModelPath }}
+        # Best-effort: this image (cisco_fraud_detection:nim_llm) is a
+        # custom-tagged rebuild, not confirmed to be nim_llm_sdk-based the
+        # way insurguard/vss-helm/chat-assistant's identical nvcr.io NIM
+        # images were (that confirmation came from reading
+        # nim_llm_sdk.hub.ngc_injector.inject_ngc_hub's source directly out
+        # of a running pod of THIS chart's NIM). If it is the same SDK
+        # family, NIM_MODEL_NAME pointed at an already-downloaded local
+        # snapshot dir (under NIM_CACHE_PATH, now PVC-backed below) skips
+        # the manifest/NGC lookup entirely. Verify via that same live-pod
+        # source-inspection method before trusting this.
+        - name: NIM_MODEL_NAME
+          value: {{ .Values.nimLlm.localModelPath | quote }}
+        {{- end }}
+        - name: NIM_GPU_MEMORY_UTILIZATION
+          value: "0.5"
+        - name: NIM_CACHE_PATH
+          value: "/tmp/nim-cache"
+        - name: HOME
+          value: "/tmp/home"
+        - name: HF_HOME
+          value: "/tmp/hf-cache"
+        - name: TRANSFORMERS_CACHE
+          value: "/tmp/hf-cache"
+        ports:
+        - containerPort: 8000
+          name: http
+        volumeMounts:
+        - name: nim-cache
+          mountPath: /tmp/nim-cache
+        - name: nim-home
+          mountPath: /tmp/home
+        - name: nim-tmp
+          mountPath: /tmp/hf-cache
+        {{- if gt (int .Values.gpu.nimCount) 0 }}
+        resources:
+          limits:
+            nvidia.com/gpu: {{ .Values.gpu.nimCount }}
+        {{- end }}
+        readinessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 180
+          periodSeconds: 15
+      volumes:
+      - name: nim-cache
+        persistentVolumeClaim:
+          claimName: nim-cache
+      - name: nim-home
+        emptyDir: {}
+      - name: nim-tmp
+        persistentVolumeClaim:
+          claimName: nim-hf-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nim-llm
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  - port: 80
+    targetPort: 8000
+    name: http-default
+  selector:
+    {{- include "fraud-detection.selectorLabels" (dict "component" "nim-llm") | nindent 4 }}

@@ -1,0 +1,99 @@
+---
+# Postgres – StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: insurance-postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: insurance-postgres
+spec:
+  serviceName: insurance-postgres
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: insurance-postgres
+  template:
+    metadata:
+      labels:
+        app: insurance-postgres
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      containers:
+        - name: postgres
+          image: {{ .Values.images.postgres }}
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            {{- include "chat-assistance.resources.infra" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-db
+              mountPath: /docker-entrypoint-initdb.d/init_db.sql
+              subPath: init_db.sql
+      volumes:
+        - name: init-db
+          configMap:
+            name: app-config
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.storage.storageClassName }}
+        storageClassName: {{ .Values.storage.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.postgres.size }}
+---
+# Postgres – Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: insurance-postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+  selector:
+    app: insurance-postgres

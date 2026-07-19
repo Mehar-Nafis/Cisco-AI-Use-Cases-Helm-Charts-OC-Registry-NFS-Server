@@ -1,0 +1,153 @@
+global:
+  #imageRegistry: karthiksiddu24
+  imageRegistry: image-registry.openshift-image-registry.svc:5000/fraud-detection
+  imagePullPolicy: IfNotPresent
+  # Set to true if running in air-gapped mode.
+  # Note: Ideally keep using karthiksiddu24/cisco_fraud_detection even for online to ensure version compatibility.
+  # Previously declared but wired to nothing anywhere in this chart — now
+  # gates the nim-llm fail-fast guard (templates/nim-llm.yaml): when true
+  # (the default), installing without nimLlm.localModelPath or ngcApiKey
+  # fails clearly at render time instead of the pod silently referencing a
+  # Secret that doesn't exist. Set to false if you're deliberately running
+  # online and want the old (unguarded) behavior back.
+  airGapped: true
+  # Docker Hub pull secret — create it before installing:
+  #   kubectl create secret docker-registry regcred \
+  #     --docker-server=https://index.docker.io/v1/ \
+  #     --docker-username=<USER> --docker-password=<PASS> --docker-email=<EMAIL> \
+  #     -n fraud-detection
+  imagePullSecrets: []
+    #- name: regcred
+images:
+  backend:
+    repository: cisco_fraud_detection
+    tag: backend
+  frontend:
+    repository: cisco_fraud_detection
+    tag: frontend-v2
+  customerService:
+    repository: cisco_fraud_detection
+    tag: customer_service
+  morpheusPipeline:
+    repository: cisco_fraud_detection
+    tag: morpheus_pipeline
+  morpheusPriority:
+    repository: cisco_fraud_detection
+    tag: morpheus_priority
+  # Was hardcoded to registry: nvcr.io/nvidia — the one image in this chart
+  # bypassing global.imageRegistry entirely, a direct unmirrored NGC
+  # dependency at every image pull. Now routed through global.imageRegistry
+  # like every other image here; the operator still needs to actually
+  # mirror nvcr.io/nvidia/tritonserver:26.03-pyt-python-py3 into that
+  # registry path first (this chart change makes it configurable to a
+  # mirror, it doesn't perform the mirroring itself — same as the deferred
+  # etcd/minio/postgres images in the insurguard chart).
+  tritonBase:
+    repository: tritonserver
+    tag: 26.03-pyt-python-py3
+  tritonModels:
+    repository: cisco_fraud_detection
+    tag: models
+  nimLLM:
+    repository: cisco_fraud_detection
+    tag: nim_llm
+  kafka:
+    repository: cisco_fraud_detection
+    tag: kafka
+  zookeeper:
+    repository: cisco_fraud_detection
+    tag: zookeeper
+  mongodb:
+    repository: cisco_fraud_detection
+    tag: mongodb
+ 
+# Python dependency versions for Triton pip-installer init container.
+# torch MUST be installed from the cu128 index (not PyPI) to support
+# Blackwell GPUs (sm_120). PyPI torch only supports up to sm_90.
+# To override for a different GPU (e.g. L40S with sm_89), you can
+# switch back to PyPI by removing the --index-url in triton.yaml
+# and pinning torch to 2.6.0 here.
+pythonDeps:
+  torchVersion: "2.7.0"
+  torchGeometricVersion: "2.6.0"
+  xgboostVersion: "2.1.4"
+  captumVersion: "0.7.0"
+ 
+# NGC API Key for NIM LLM (pass via --set ngcApiKey=<your-key>)
+# Leave empty to skip secret creation
+ngcApiKey: ""
+ 
+# GPU Node Deployment Target
+# Set gpuType to "l40s" or "rtx6000" to deploy the entire stack on that GPU cluster.
+#   l40s    → targets nodes with label: nvidia.com/gpu.product=NVIDIA-L40S (wn1, wn2)
+#   rtx6000 → targets nodes with label: nvidia.com/gpu.product=NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition (c845)
+nodeDeployment:
+  gpuType: l40s
+ 
+# GPU Configuration
+gpu:
+  enabled: true
+  resourceType: nvidia.com/gpu
+  morpheusCount: 1
+  tritonCount: 1
+  # NIM LLM is huge, check if you have enough GPUs.
+  # If running all on 1 node with 1 GPU, you might need MIG or time-slicing.
+  nimCount: 1
+ 
+# Persistence
+persistence:
+  mongodb: 10Gi
+  kafka: 5Gi
+  # nim-llm's caches were emptyDir (ephemeral) before — every restart
+  # re-downloaded from NGC regardless of ngcApiKey. Now PVC-backed so a
+  # warm cache survives restarts, same rationale as every other chart in
+  # this air-gap effort.
+  nimCache: 30Gi
+  nimHfCache: 15Gi
+
+# RECOMMENDED for air-gap resilience — see templates/nim-llm.yaml's
+# NIM_MODEL_NAME comment for the full explanation and its caveats (this
+# image is a custom-tagged rebuild, not confirmed nim_llm_sdk-based the
+# way the equivalent NIMs in insurguard/vss-helm/chat-assistant were).
+nimLlm:
+  localModelPath: ""
+ 
+# Service configuration — ClusterIP for OpenShift (use Routes for external access)
+service:
+  type: ClusterIP
+  frontendPort: 3000
+  backendPort: 8000
+  tritonHttpPort: 8005
+  tritonGrpcPort: 8006
+ 
+# OpenShift Routes
+routes:
+  frontend:
+    enabled: true
+    # host: fraud-detection.apps.your-cluster.example.com  # Leave empty for auto-generated
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+  backend:
+    enabled: true
+    # host: fraud-detection-api.apps.your-cluster.example.com
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+  nimLlm:
+    enabled: true
+    # host: fraud-detection-llm.apps.your-cluster.example.com  # Leave empty for auto-generated
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+ 
+# Pod security context (OpenShift non-root)
+podSecurityContext:
+  runAsNonRoot: true
+ 
+# Container security context
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL

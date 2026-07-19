@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "backend") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" (dict "component" "backend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-detection.labels" . | nindent 8 }}
+        {{- include "fraud-detection.selectorLabels" (dict "component" "backend") | nindent 8 }}
+    spec:
+      {{- include "fraud-detection.nodeSelector" . | nindent 6 }}
+      {{- include "fraud-detection.imagePullSecrets" . | nindent 6 }}
+      {{- include "fraud-detection.podSecurityContext" . | nindent 6 }}
+      containers:
+      - name: backend
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.backend.repository }}:{{ .Values.images.backend.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        ports:
+        - containerPort: 8000
+        env:
+        - name: KAFKA_BROKER
+          value: "kafka:29092"
+        - name: MONGODB_URL
+          value: "mongodb://mongodb:27017"
+        - name: DB_NAME
+          value: "fraud_detection"
+        readinessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - port: 8000
+    targetPort: 8000
+  selector:
+    {{- include "fraud-detection.selectorLabels" (dict "component" "backend") | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-service
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "customer-service") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" (dict "component" "customer-service") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-detection.labels" . | nindent 8 }}
+        {{- include "fraud-detection.selectorLabels" (dict "component" "customer-service") | nindent 8 }}
+    spec:
+      {{- include "fraud-detection.nodeSelector" . | nindent 6 }}
+      {{- include "fraud-detection.imagePullSecrets" . | nindent 6 }}
+      {{- include "fraud-detection.podSecurityContext" . | nindent 6 }}
+      containers:
+      - name: customer-service
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.customerService.repository }}:{{ .Values.images.customerService.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        command: ["/opt/conda/envs/morpheus/bin/uvicorn", "customer_api:app", "--host", "0.0.0.0", "--port", "5000"]
+        ports:
+        - containerPort: 5000
+        env:
+        - name: KAFKA_BROKER
+          value: "kafka:29092"
+        - name: TRITON_URL
+          value: "tritonserver:8005"
+        readinessProbe:
+          tcpSocket:
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-service
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+spec:
+  ports:
+  - port: 5000
+    targetPort: 5000
+  selector:
+    {{- include "fraud-detection.selectorLabels" (dict "component" "customer-service") | nindent 4 }}

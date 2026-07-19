@@ -1,0 +1,87 @@
+{{- $viaServerSvc     := printf "%s-via-server" .Release.Name }}
+{{- $storageSvc       := printf "%s-storage-ms" .Release.Name }}
+{{- $alertBridgeSvc   := printf "%s-alert-bridge" .Release.Name }}
+{{- $alertInspectorSvc := printf "%s-alert-inspector-ui" .Release.Name }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vss.fullname" . }}-nginx-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    pid /var/cache/nginx/nginx.pid;
+
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        error_log /dev/stderr warn;
+        log_format custom '$remote_addr - $remote_user [$time_local] '
+                          '"$request" $status $body_bytes_sent '
+                          '"$http_referer" "$http_user_agent"';
+        access_log /dev/stdout custom;
+
+        upstream vss_server_backend {
+            server {{ $viaServerSvc }}:{{ .Values.viaServer.backendPort }};
+        }
+
+        upstream storage_ms {
+            server {{ $storageSvc }}:{{ .Values.storageMs.httpPort }};
+        }
+
+        upstream alert_bridge {
+            server {{ $alertBridgeSvc }}:{{ .Values.alertBridge.fastapiPort }};
+        }
+
+        upstream alert_inspector_ui_gradio {
+            server {{ $alertInspectorSvc }}:{{ .Values.alertInspectorUi.gradioPort }};
+        }
+
+        server {
+            listen {{ .Values.apiGateway.port }};
+            server_name localhost;
+
+            location /api/vss/ {
+                proxy_pass http://vss_server_backend/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            location /api/storage/ {
+                proxy_pass http://storage_ms/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+
+            location /api/alertbridge/ {
+                proxy_pass http://alert_bridge/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            location /alertinspector/ {
+                proxy_pass http://alert_inspector_ui_gradio/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            location /health {
+                return 200 "API Gateway healthy\n";
+                add_header Content-Type text/plain;
+            }
+
+            location / {
+                return 301 /health;
+            }
+        }
+    }

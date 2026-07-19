@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Local secrets / overrides
+secrets-values.yaml
+*.local.yaml
+
+# Helm
+*.tgz
+charts/

@@ -1,0 +1,18 @@
+apiVersion: v2
+name: chat-assistance
+description: >
+  OpenShift Helm chart for the Chat Assistance application.
+  Includes infrastructure (etcd, MinIO, Milvus, Postgres, MongoDB),
+  backend microservices, NVIDIA NIM AI services, and a frontend with
+  an OpenShift Route for external access.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - chat
+  - ai
+  - nvidia
+  - nim
+  - rag
+maintainers:
+  - name: lakshmilavanya2001

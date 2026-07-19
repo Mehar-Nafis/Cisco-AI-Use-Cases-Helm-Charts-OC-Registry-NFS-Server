@@ -1,0 +1,77 @@
+{{- if .Values.nvidia.enabled }}
+# ---------------------------------------------------------------------------
+# NIM Model Cache PVCs
+# These give each NIM pod a persistent volume for /opt/nim/.cache so that
+# downloaded models survive pod restarts — avoiding the ~20-min re-download
+# on every helm upgrade or pod crash.
+# Sizes are configured in values.yaml under storage.nimCache.*
+# ---------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nim-cache-llama
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.nimCache.llama }}
+  {{- if .Values.storage.storageClassName }}
+  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nim-cache-content
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.nimCache.content }}
+  {{- if .Values.storage.storageClassName }}
+  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nim-cache-topic-control
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.nimCache.topicControl }}
+  {{- if .Values.storage.storageClassName }}
+  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nim-cache-embedqa
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.nimCache.embedqa }}
+  {{- if .Values.storage.storageClassName }}
+  storageClassName: {{ .Values.storage.storageClassName }}
+  {{- end }}
+{{- end }}

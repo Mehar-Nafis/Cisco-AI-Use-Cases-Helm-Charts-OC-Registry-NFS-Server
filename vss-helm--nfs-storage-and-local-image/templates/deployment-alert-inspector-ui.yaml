@@ -1,0 +1,64 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "alert-inspector-ui" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.primaryAffinity" . | nindent 6 }}
+      {{- include "vss.podSecurityContext" . | nindent 6 }}
+      initContainers:
+        - name: wait-for-alert-bridge
+          image: curlimages/curl:latest
+          securityContext:
+            {{ include "vss.containerSecurityContext" . | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - until curl -sf http://{{ $fullname }}-alert-bridge:{{ .Values.alertBridge.fastapiPort }}/health; do echo "waiting for alert-bridge"; sleep 5; done
+      containers:
+        - name: alert-inspector-ui
+          image: {{ .Values.alertInspectorUi.image }}
+          imagePullPolicy: IfNotPresent
+          stdin: true
+          tty: true
+          securityContext:
+            {{- include "vss.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.alertInspectorUi.gradioPort }}
+              name: gradio
+            - containerPort: {{ .Values.alertInspectorUi.backendPort }}
+              name: backend
+          env:
+            - name: BACKEND_IP
+              value: "{{ $fullname }}-via-server"
+            - name: BACKEND_PORT
+              value: {{ .Values.viaServer.backendPort | quote }}
+            - name: GRADIO_SERVER
+              value: "0.0.0.0"
+            - name: ALERT_BRIDGE_BASE_URL
+              value: "ws://{{ $fullname }}-alert-bridge:{{ .Values.alertBridge.fastapiPort }}"
+          resources:
+            {{- toYaml .Values.alertInspectorUi.resources | nindent 12 }}
+          volumeMounts:
+            - name: shared-media
+              mountPath: /tmp
+      volumes:
+        - name: shared-media
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-vss-shared-media

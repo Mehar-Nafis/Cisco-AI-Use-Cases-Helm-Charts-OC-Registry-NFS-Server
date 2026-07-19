@@ -1,0 +1,84 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "manufacturing-qa" }}
+{{- if .Values.manufacturingQa.image }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.primaryAffinity" . | nindent 6 }}
+      {{- include "vss.podSecurityContext" . | nindent 6 }}
+      initContainers:
+        - name: seed-app-data
+          image: {{ .Values.manufacturingQa.image }}
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "cp -rn /app/storage/. /mnt/storage/ 2>/dev/null || true; cp -rn /app/videos/. /mnt/videos/ 2>/dev/null || true"]
+          volumeMounts:
+            - name: app-storage
+              mountPath: /mnt/storage
+            - name: app-videos
+              mountPath: /mnt/videos
+      containers:
+        - name: manufacturing-qa
+          image: {{ .Values.manufacturingQa.image }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "vss.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.manufacturingQa.appPort | int }}
+              name: gradio
+          envFrom:
+            - configMapRef:
+                name: {{ $fullname }}-manufacturing-qa-env
+          env:
+            - name: MEDIA_BASE_DIR
+              value: "/tmp"
+          resources:
+            {{- toYaml .Values.manufacturingQa.resources | nindent 12 }}
+          volumeMounts:
+            - name: shared-media
+              mountPath: /tmp
+            - name: app-storage
+              mountPath: /app/storage
+            - name: app-videos
+              mountPath: /app/videos
+      volumes:
+        - name: shared-media
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-vss-shared-media
+        - name: app-storage
+          emptyDir: {}
+        - name: app-videos
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 4 }}
+  ports:
+    - name: gradio
+      port: {{ .Values.manufacturingQa.appPort | int }}
+      targetPort: gradio
+{{- end }}

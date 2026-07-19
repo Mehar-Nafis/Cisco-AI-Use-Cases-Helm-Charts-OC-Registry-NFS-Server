@@ -1,0 +1,137 @@
+{{- if .Values.global.openshift }}
+{{- $fullname := include "vss.fullname" . }}
+{{- $tls := .Values.route.tls }}
+
+# ---------------------------------------------------------------------------
+# Route: api-gateway  (nginx proxy – /api/vss/, /api/storage/, /api/alertbridge/)
+# Primary external entry point for the event_reviewer stack.
+# ---------------------------------------------------------------------------
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $fullname }}-api-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  {{- with include "vss.routeHost" (dict "root" . "prefix" "api-gateway") }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $fullname }}-api-gateway
+  port:
+    targetPort: http
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+---
+# ---------------------------------------------------------------------------
+# Route: cv-ui  (CV Event Detector Gradio UI – port 7862)
+# ---------------------------------------------------------------------------
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $fullname }}-cv-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cv-ui
+spec:
+  {{- with include "vss.routeHost" (dict "root" . "prefix" "cv-ui") }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $fullname }}-cv-ui
+  port:
+    targetPort: gradio
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+---
+# ---------------------------------------------------------------------------
+# Route: alert-inspector-ui  (VSS Alert Inspector Gradio UI – port 7860)
+# ---------------------------------------------------------------------------
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $fullname }}-alert-inspector-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alert-inspector-ui
+spec:
+  {{- with include "vss.routeHost" (dict "root" . "prefix" "alert-inspector") }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $fullname }}-alert-inspector-ui
+  port:
+    targetPort: gradio
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+---
+# ---------------------------------------------------------------------------
+# Route: nim-llm  (NIM LLM REST API – optional, expose if external access needed)
+# ---------------------------------------------------------------------------
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $fullname }}-nim-llm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nim-llm
+spec:
+  {{- with include "vss.routeHost" (dict "root" . "prefix" "nim-llm") }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $fullname }}-nim-llm
+  port:
+    targetPort: http
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+---
+# ---------------------------------------------------------------------------
+# Route: manufacturing-qa  (Manufacturing QA Gradio UI – port 7865)
+# ---------------------------------------------------------------------------
+{{- if .Values.manufacturingQa.image }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $fullname }}-manufacturing-qa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manufacturing-qa
+spec:
+  {{- with include "vss.routeHost" (dict "root" . "prefix" "manufacturing-qa") }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ $fullname }}-manufacturing-qa
+  port:
+    targetPort: gradio
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+{{- end }}
+{{- end }}

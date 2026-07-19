@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tritonserver
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "tritonserver") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" (dict "component" "tritonserver") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-detection.labels" . | nindent 8 }}
+        {{- include "fraud-detection.selectorLabels" (dict "component" "tritonserver") | nindent 8 }}
+    spec:
+      {{- include "fraud-detection.nodeSelector" . | nindent 6 }}
+      {{- include "fraud-detection.imagePullSecrets" . | nindent 6 }}
+      {{- include "fraud-detection.podSecurityContext" . | nindent 6 }}
+      # Init Container 1: Copies models from the read-only image to the shared volume
+      initContainers:
+      - name: model-loader
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.tritonModels.repository }}:{{ .Values.images.tritonModels.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        command: ["/bin/sh", "-c", "cp -r /models/* /model_repo/"]
+        volumeMounts:
+        - name: model-repo
+          mountPath: /model_repo
+
+      # Init Container 2: Pre-installs Python packages needed by model.py into a shared volume.
+      # Triton's Python backend stub (triton_python_backend_stub) runs as an isolated subprocess
+      # using /lib/x86_64-linux-gnu/libpython3.12.so.1.0 and initializes Python via
+      # PyConfig_InitPythonConfig — it does NOT inherit the container's environment.
+      # Packages must be installed to /extra-python and PYTHONPATH set on the main container.
+      #
+      # IMPORTANT: torch must be installed from the cu128 index to support Blackwell GPUs
+      # (sm_120, compute capability 12.0). The default PyPI torch only supports up to sm_90.
+      # cupy-cuda12x is required by xgboost for GPU-accelerated DMatrix operations.
+      - name: pip-installer
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.tritonBase.repository }}:{{ .Values.images.tritonBase.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        command:
+          - /bin/sh
+          - -c
+          - |
+            pip install \
+              --target /extra-python \
+              --index-url https://download.pytorch.org/whl/cu128 \
+              torch=={{ .Values.pythonDeps.torchVersion }} \
+            && pip install \
+              --target /extra-python \
+              --extra-index-url https://download.pytorch.org/whl/cu128 \
+              torch-geometric=={{ .Values.pythonDeps.torchGeometricVersion }} \
+              xgboost=={{ .Values.pythonDeps.xgboostVersion }} \
+              captum=={{ .Values.pythonDeps.captumVersion }} \
+              cupy-cuda12x \
+              matplotlib \
+              --no-cache-dir
+        env:
+        - name: HOME
+          value: /tmp
+        volumeMounts:
+        - name: extra-python
+          mountPath: /extra-python
+
+      containers:
+      - name: tritonserver
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.tritonBase.repository }}:{{ .Values.images.tritonBase.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        command: ["tritonserver", "--model-repository=/model_repo", "--exit-timeout-secs=6000", "--http-port=8005", "--grpc-port=8006", "--metrics-port=8007"]
+        env:
+        - name: HOME
+          value: /tmp
+        # Expose the pip-installed packages to Triton's Python backend subprocess.
+        # The stub reads PYTHONPATH at runtime via PyConfig, so this must match
+        # the --target path used in the pip-installer init container above.
+        - name: PYTHONPATH
+          value: /extra-python
+        ports:
+        - containerPort: 8005
+          name: http
+        - containerPort: 8006
+          name: grpc
+        - containerPort: 8007
+          name: metrics
+        volumeMounts:
+        - name: model-repo
+          mountPath: /model_repo
+        # Mount extra-python so the main tritonserver container and its pb_stub
+        # subprocess can access the packages installed by pip-installer.
+        - name: extra-python
+          mountPath: /extra-python
+        resources:
+          limits:
+            nvidia.com/gpu: {{ .Values.gpu.tritonCount }}
+        # startupProbe gives Triton time to load all models before liveness/readiness kick in.
+        # 60 failures × 10s = up to 10 minutes for startup.
+        startupProbe:
+          httpGet:
+            path: /v2/health/ready
+            port: 8005
+          failureThreshold: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /v2/health/ready
+            port: 8005
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /v2/health/live
+            port: 8005
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          failureThreshold: 3
+      volumes:
+      - name: model-repo
+        emptyDir: {}
+      - name: extra-python
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tritonserver
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+spec:
+  ports:
+  - port: 8005
+    targetPort: 8005
+    name: http
+  - port: 8006
+    targetPort: 8006
+    name: grpc
+  selector:
+    {{- include "fraud-detection.selectorLabels" (dict "component" "tritonserver") | nindent 4 }}

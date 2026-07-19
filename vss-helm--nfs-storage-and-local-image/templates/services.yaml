@@ -1,0 +1,184 @@
+{{- $fullname := include "vss.fullname" . }}
+
+# ---------------------------------------------------------------------------
+# via-server  (VSS Engine)
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-via-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: via-server
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "via-server") | nindent 4 }}
+  ports:
+    - name: backend
+      port: {{ .Values.viaServer.backendPort }}
+      targetPort: backend
+    - name: frontend
+      port: {{ .Values.viaServer.frontendPort }}
+      targetPort: frontend
+---
+# ---------------------------------------------------------------------------
+# storage-ms  (VST Storage)
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-storage-ms
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: storage-ms
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "storage-ms") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.storageMs.httpPort }}
+      targetPort: http
+---
+# ---------------------------------------------------------------------------
+# redis
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "redis") | nindent 4 }}
+  ports:
+    - name: redis
+      port: {{ .Values.redis.port }}
+      targetPort: redis
+---
+# ---------------------------------------------------------------------------
+# alert-bridge
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-alert-bridge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alert-bridge
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "alert-bridge") | nindent 4 }}
+  ports:
+    - name: fastapi
+      port: {{ .Values.alertBridge.fastapiPort }}
+      targetPort: fastapi
+    - name: health
+      port: {{ .Values.alertBridge.healthPort }}
+      targetPort: health
+---
+# ---------------------------------------------------------------------------
+# alert-inspector-ui
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-alert-inspector-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alert-inspector-ui
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "alert-inspector-ui") | nindent 4 }}
+  ports:
+    - name: gradio
+      port: {{ .Values.alertInspectorUi.gradioPort }}
+      targetPort: gradio
+    - name: backend
+      port: {{ .Values.alertInspectorUi.backendPort }}
+      targetPort: backend
+---
+# ---------------------------------------------------------------------------
+# api-gateway  (nginx – external entry point for event_reviewer stack)
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-api-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "api-gateway") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.apiGateway.port }}
+      targetPort: http
+---
+# ---------------------------------------------------------------------------
+# nv-cv-event-detector
+# CV_DETECTOR_API_URL → http://<release>-nv-cv-event-detector:23491
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-nv-cv-event-detector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nv-cv-event-detector
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "nv-cv-event-detector") | nindent 4 }}
+  ports:
+    - name: api
+      port: {{ .Values.cvEventDetector.apiPort }}
+      targetPort: api
+---
+# ---------------------------------------------------------------------------
+# cv-ui
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-cv-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cv-ui
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "cv-ui") | nindent 4 }}
+  ports:
+    - name: gradio
+      port: {{ .Values.cvUi.port }}
+      targetPort: gradio
+---
+# ---------------------------------------------------------------------------
+# nim-llm  (Nemotron 49B)
+# LLM_API_URL → http://<release>-nim-llm:8999/v1/chat/completions
+# Service port 8999 maps to container port 8000 (mirrors compose host:8999→container:8000)
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-nim-llm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nim-llm
+spec:
+  selector:
+    {{- include "vss.selectorLabels" (dict "root" . "component" "nim-llm") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.nimLlm.servicePort }}
+      targetPort: http

@@ -1,0 +1,45 @@
+{{/*
+Derive endpoint URLs from internal K8s service names unless overridden.
+These values mirror manufacturing_qa/.env and are consumed by the
+manufacturing-qa application as environment variables or a mounted .env file.
+*/}}
+{{- $cvDetectorUrl := .Values.manufacturingQa.cvDetectorApiUrlOverride }}
+{{- if not $cvDetectorUrl }}
+{{- $cvDetectorUrl = printf "http://%s-nv-cv-event-detector:%d" .Release.Name (int .Values.cvEventDetector.apiPort) }}
+{{- end }}
+
+{{- $llmApiUrl := .Values.manufacturingQa.llmApiUrlOverride }}
+{{- if not $llmApiUrl }}
+{{- $llmApiUrl = printf "http://%s-nim-llm:%d/v1/chat/completions" .Release.Name (int .Values.nimLlm.servicePort) }}
+{{- end }}
+
+{{- $vssEngineUrl := .Values.manufacturingQa.vssEngineUrlOverride }}
+{{- if not $vssEngineUrl }}
+{{- $vssEngineUrl = printf "http://%s-via-server:%d" .Release.Name (int .Values.viaServer.backendPort) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vss.fullname" . }}-manufacturing-qa-env
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+data:
+  # CV Event Detector API – served by nv-cv-event-detector
+  CV_DETECTOR_API_URL: {{ $cvDetectorUrl | quote }}
+
+  # NIM LLM API – served by nim-llm (Nemotron 49B)
+  LLM_API_URL: {{ $llmApiUrl | quote }}
+  LLM_MODEL_NAME: "meta/llama-3.1-8b-instruct"
+
+  # VSS Engine – served by via-server
+  VSS_ENGINE_URL: {{ $vssEngineUrl | quote }}
+
+  # Storage / application paths
+  MEDIA_BASE_DIR: {{ .Values.manufacturingQa.mediaBaseDir | quote }}
+  APP_STORAGE_BASE_DIR: {{ .Values.manufacturingQa.appStorageBaseDir | quote }}
+  SAMPLE_VIDEOS_DIR: {{ .Values.manufacturingQa.sampleVideosDir | quote }}
+
+  # App settings
+  APP_PORT: {{ .Values.manufacturingQa.appPort | quote }}
+  DEBUG: {{ .Values.manufacturingQa.debug | quote }}

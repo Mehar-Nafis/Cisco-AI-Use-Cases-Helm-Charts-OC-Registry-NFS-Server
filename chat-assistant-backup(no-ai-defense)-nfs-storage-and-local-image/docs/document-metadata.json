@@ -1,0 +1,24 @@
+{
+  "documents": [
+    {
+      "filename": "global-document.pdf",
+      "user_id": "global",
+      "document_type": "global"
+    },
+    {
+      "filename": "Private_Car_Comprehensive_Policy_User_user101.pdf",
+      "user_id": "user101",
+      "document_type": "user_specific"
+    },
+    {
+      "filename": "health-insurance-user202.pdf",
+      "user_id": "user202",
+      "document_type": "user_specific"
+    },
+    {
+      "filename": "home-contents-insurance-user303.pdf",
+      "user_id": "user303",
+      "document_type": "user_specific"
+    }
+  ]
+}

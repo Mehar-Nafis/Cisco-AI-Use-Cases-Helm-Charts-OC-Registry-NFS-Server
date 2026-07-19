@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monai-frontend
+  labels:
+    app: monai-frontend
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      app: monai-frontend
+  template:
+    metadata:
+      labels:
+        app: monai-frontend
+    spec:
+      {{- $ns := .Values.frontend.nodeSelector | default .Values.global.nodeSelector }}
+      {{- if $ns }}
+      nodeSelector:
+{{ toYaml $ns | indent 8 }}
+      {{- end }}
+      {{- $tol := .Values.frontend.tolerations | default .Values.global.tolerations }}
+      {{- if $tol }}
+      tolerations:
+{{ toYaml $tol | indent 8 }}
+      {{- end }}
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          resources:
+{{ toYaml .Values.frontend.resources | indent 12 }}
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: monai-frontend-nginx-config
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}

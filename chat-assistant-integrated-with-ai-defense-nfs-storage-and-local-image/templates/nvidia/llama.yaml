@@ -1,0 +1,133 @@
+{{- if .Values.nvidia.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: llama
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: llama
+  template:
+    metadata:
+      labels:
+        app: llama
+        gpu-workload: "true"
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      {{- include "chat-assistance.nimAntiAffinity" . | nindent 6 }}
+
+      imagePullSecrets:
+        - name: ncr-registry-secret
+      containers:
+        - name: llama
+          image: {{ .Values.images.llama }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+            - name: NIM_NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+            {{- if .Values.nvidia.llamaLocalModelPath }}
+            # Points nim_llm_sdk.hub.ngc_injector.inject_ngc_hub at an already-
+            # downloaded local snapshot dir (under nim-cache-llama's mount at
+            # /opt/nim/.cache) — takes the early branch that loads straight
+            # from disk, skipping the manifest/NGC profile lookup entirely.
+            # Confirmed (on a different chart's identical NIM image) by
+            # reading inject_ngc_hub's source directly out of a running pod:
+            # `if os.path.exists(model_uri) and os.path.isdir(model_uri): ...`
+            - name: NIM_MODEL_NAME
+              value: {{ .Values.nvidia.llamaLocalModelPath | quote }}
+            {{- else if .Values.nvidia.llamaProfile }}
+            # Explicit profile bypasses NGC hub lookup (inject_ngc_hub/repo.get_all())
+            # which fails when the API key lacks NGC org membership.
+            - name: NIM_MODEL_PROFILE
+              value: {{ .Values.nvidia.llamaProfile | quote }}
+            {{- end }}
+            - name: NIM_MAX_NUM_SEQS
+              value: {{ .Values.nvidia.maxNumSeqs | default "2" | quote }}
+            # NIM_KVCACHE_PERCENT removed — vLLM-specific; crashes TRT-LLM auto-selected profiles
+            # NIM/vLLM defaults to 90% KV cache on dedicated GPU which is optimal for L40S
+            # Remove vLLM scheduler delay so tokens are dispatched without artificial pause
+            - name: VLLM_SLEEP_WHEN_IDLE
+              value: "0"
+            # Stream in small token chunks (5) for smooth UI render instead of word-by-word single tokens
+            # Adjust in values.yaml via nvidia.streamingTokenChunkSize
+            - name: NIM_STREAMING_TOKEN_CHUNK_SIZE
+              value: {{ .Values.nvidia.streamingTokenChunkSize | default "20" | quote }}
+            # Enable prompt streaming so first tokens reach client immediately
+            - name: NIM_ENABLE_PROMPT_STREAMING
+              value: {{ .Values.nvidia.enablePromptStreaming | default "1" | quote }}
+            # Disable InfiniBand in UCX — single-GPU (tp1) doesn't need IB and the
+            # container locked-memory ulimit (8192 kB) is too low for ibv_reg_mr
+            - name: UCX_TLS
+              value: "tcp"
+            - name: NCCL_IB_DISABLE
+              value: "1"
+          resources:
+            requests:
+              cpu: {{ .Values.resources.nvidia.requests.cpu }}
+              memory: {{ .Values.resources.nvidia.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.nvidia.limits.cpu }}
+              memory: {{ .Values.resources.nvidia.limits.memory }}
+              nvidia.com/gpu: {{ .Values.nvidia.llamaGpuCount | default .Values.nvidia.gpuCount }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: 8000
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /v1/health/live
+              port: 8000
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            failureThreshold: 30
+          volumeMounts:
+            - name: nim-cache
+              mountPath: /opt/nim/.cache
+      volumes:
+        - name: nim-cache
+          persistentVolumeClaim:
+            claimName: nim-cache-llama
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - name: nim
+      port: 8000
+      targetPort: 8000
+    # Also serve on port 80 so a portless URL (e.g. AI Defense forwarding to
+    # http://llama.chat-assistant.svc.cluster.local) reaches the NIM on 8000.
+    - name: http
+      port: 80
+      targetPort: 8000
+  selector:
+    app: llama
+{{- end }}

@@ -1,0 +1,226 @@
+---
+# Patch for catalog-retriever main.py to load document metadata from JSON file
+# instead of relying on filename regex for user_id/document_type extraction.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-main-patch
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+data:
+  main.py: |
+    # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+    from typing import List, Dict
+    from app.retriever import Retriever, RetrieverConfig
+    import time
+    import os
+    import json
+    import yaml
+    import logging
+    import sys
+
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        stream=sys.stdout
+    )
+
+    # FastAPI app
+    app = FastAPI()
+
+    # Get directory contents and report them.
+    dir_contents = []
+    for entry in os.listdir("."):
+        dir_contents.append(entry)
+    logging.info(f"CATALOG RETRIEVER | startup | Directory contents: {dir_contents}")
+
+    # Get our configuration from config.yaml with optional override support
+    def load_config_with_override(base_config_path: str):
+        """Load configuration from YAML file with optional override support."""
+        # Load base config
+        if not os.path.exists(base_config_path):
+            logging.error(f"Base config file not found at {base_config_path}")
+            raise FileNotFoundError(f"Base config file not found at {base_config_path}")
+
+        with open(base_config_path, "r") as f:
+            config = yaml.safe_load(f)
+
+        # Check for override config
+        override_file = os.environ.get("CONFIG_OVERRIDE")
+        if override_file:
+            # Construct override path (same directory as base config)
+            base_dir = os.path.dirname(base_config_path)
+            override_path = os.path.join(base_dir, override_file)
+
+            if os.path.exists(override_path):
+                logging.info(f"Loading override config from {override_path}")
+                with open(override_path, "r") as f:
+                    override_config = yaml.safe_load(f)
+
+                # Merge override config into base config
+                config.update(override_config)
+                logging.info(f"Config override applied from {override_file}")
+            else:
+                logging.warning(f"Override config file not found at {override_path}")
+        else:
+            logging.info("No config override specified, using base config only")
+
+        return config
+
+    data = load_config_with_override("/app/shared/configs/catalog_retriever/config.yaml")
+
+
+    # Setup Retriever once when app starts
+    config = RetrieverConfig(
+        text_embed_port=data["text_embed_port"],
+        image_embed_port=data["image_embed_port"],
+        text_model_name=data["text_model_name"],
+        image_model_name=data["image_model_name"],
+        db_port=data["db_port"],
+        db_name=data["db_name"],
+        sim_threshold=data["sim_threshold"],
+        text_collection=data["text_collection"],
+        image_collection=data["image_collection"]
+    )
+
+    logging.info("CATALOG RETRIEVER | startup | config.yaml ingested.")
+    logging.info("CATALOG RETRIEVER | startup | Initializing Retriever object.")
+    retriever = Retriever(config=config)
+    logging.info("CATALOG RETRIEVER | startup | Checking and populating Milvus database if needed.")
+
+    # Load document metadata from JSON file
+    def load_document_metadata(data_dir: str) -> dict:
+        """Load document metadata mapping from JSON file.
+        Returns a dict mapping filename -> {user_id, document_type}."""
+        metadata_map = {}
+        metadata_path = os.path.join(data_dir, "document-metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, "r") as f:
+                meta = json.load(f)
+            for doc in meta.get("documents", []):
+                metadata_map[doc["filename"]] = {
+                    "user_id": doc.get("user_id", "global"),
+                    "document_type": doc.get("document_type", "global")
+                }
+            logging.info(f"CATALOG RETRIEVER | startup | Loaded metadata for {len(metadata_map)} documents: {list(metadata_map.keys())}")
+        else:
+            logging.warning(f"CATALOG RETRIEVER | startup | No document-metadata.json found at {metadata_path}, falling back to filename-based extraction.")
+        return metadata_map
+
+    data_dir = "/app/shared/data"
+    metadata_map = load_document_metadata(data_dir)
+
+    if os.path.exists(data_dir):
+        for filename in os.listdir(data_dir):
+            file_path = os.path.join(data_dir, filename)
+            if filename.endswith(".pdf"):
+                logging.info(f"CATALOG RETRIEVER | startup | Ingesting PDF: {filename}")
+                doc_meta = metadata_map.get(filename)
+                retriever.milvus_from_pdf(
+                    pdf_path=file_path,
+                    verbose=True,
+                    user_id=doc_meta["user_id"] if doc_meta else None,
+                    document_type=doc_meta["document_type"] if doc_meta else None
+                )
+    else:
+        logging.warning(f"CATALOG RETRIEVER | startup | Data directory {data_dir} not found.")
+
+    logging.info("CATALOG RETRIEVER | startup | Milvus database ready.")
+
+    # Request bodies
+    class TextQueryRequest(BaseModel):
+        text: List[str] = []
+        categories: List[str] = []
+        k: int = 4
+        user_id: str | int | None = None
+
+    class ImageQueryRequest(BaseModel):
+        text: List[str] = []
+        image_base64: str = ""
+        categories: List[str] = []
+        k: int = 4
+        user_id: str | int | None = None
+
+    # Handles queries only containing text.
+    @app.post("/query/text")
+    async def query_text(req: TextQueryRequest):
+        logging.info(f"CATALOG RETRIEVER | query_text() | Received POST: {req}.")
+        texts, ids, sims, names, images = await retriever.retrieve(
+            query=req.text,
+            categories=req.categories,
+            k=req.k,
+            image_bool=False,
+            verbose=True,
+            user_id=str(req.user_id) if req.user_id is not None else None
+        )
+        return {
+            "texts": texts,
+            "ids": ids,
+            "similarities": sims,
+            "names": names,
+            "images": images
+        }
+
+    # Handles queries containing text and b64 images.
+    @app.post("/query/image")
+    async def query_image(req: ImageQueryRequest):
+        logging.info(f"CATALOG RETRIEVER | query_image() | Received POST.")
+        texts, ids, sims, names, images = await retriever.retrieve(
+            query=req.text,
+            image=req.image_base64,
+            categories=req.categories,
+            k=req.k,
+            image_bool=True,
+            verbose=True,
+            user_id=str(req.user_id) if req.user_id is not None else None
+        )
+        return {
+            "texts": texts,
+            "ids": ids,
+            "similarities": sims,
+            "names": names,
+            "images": images
+        }
+
+    @app.post("/reindex")
+    async def reindex_documents():
+        """Reindex all documents in the data directory"""
+        try:
+            logging.info("CATALOG RETRIEVER | reindex() | Starting reindexing process")
+
+            data_dir = "/app/shared/data"
+            doc_metadata = load_document_metadata(data_dir)
+
+            if os.path.exists(data_dir):
+                for filename in os.listdir(data_dir):
+                    file_path = os.path.join(data_dir, filename)
+                    if filename.endswith(".pdf"):
+                        logging.info(f"CATALOG RETRIEVER | reindex() | Processing PDF: {filename}")
+                        doc_meta = doc_metadata.get(filename)
+                        retriever.milvus_from_pdf(
+                            pdf_path=file_path,
+                            verbose=True,
+                            user_id=doc_meta["user_id"] if doc_meta else None,
+                            document_type=doc_meta["document_type"] if doc_meta else None
+                        )
+
+            return {"status": "success", "message": "Reindexing completed"}
+
+        except Exception as e:
+            logging.error(f"CATALOG RETRIEVER | reindex() | Error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/health")
+    async def health_check():
+        """Health check endpoint."""
+        return {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "version": "1.0.0"
+        }

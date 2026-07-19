@@ -1,0 +1,110 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chain-server
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: chain-server
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: chain-server
+  template:
+    metadata:
+      labels:
+        app: chain-server
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      containers:
+        - name: chain-server
+          image: {{ .Values.images.chainServer }}
+          ports:
+            - containerPort: 8009
+          env:
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-defense-secret
+                  key: api-key
+            - name: CATALOG_RETRIEVER_URL
+              value: "http://catalog-retriever:8010"
+            - name: MEMORY_RETRIEVER_URL
+              value: "http://memory-retriever:8011"
+          resources:
+            {{- include "chat-assistance.resources.backend" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 8009
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8009
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 10
+          volumeMounts:
+            - name: chain-config
+              mountPath: /app/shared/configs/chain_server
+              readOnly: true
+            # Patched summarizer.py: guards against None tool_calls from LLM
+            - name: summarizer-patch
+              mountPath: /app/app/summarizer.py
+              subPath: summarizer.py
+              readOnly: true
+            # Patched retriever.py: skips expensive _get_categories LLM calls (~40sec savings)
+            - name: chain-retriever-patch
+              mountPath: /app/app/retriever.py
+              subPath: retriever.py
+              readOnly: true
+            # Patched main.py: adds SSE streaming headers to prevent HAProxy buffering
+            - name: chain-main-patch
+              mountPath: /app/app/main.py
+              subPath: main.py
+              readOnly: true
+            # Patched chatter.py: non-streaming LLM call (AI Defense can't stream) +
+            # AI Defense block detection -> unsafe_message
+            - name: chain-chatter-patch
+              mountPath: /app/app/chatter.py
+              subPath: chatter.py
+              readOnly: true
+      volumes:
+        - name: chain-config
+          configMap:
+            name: shared-configs
+            items:
+              - key: chain_server_config.yaml
+                path: config.yaml
+        - name: summarizer-patch
+          configMap:
+            name: summarizer-patch
+        - name: chain-retriever-patch
+          configMap:
+            name: chain-retriever-patch
+        - name: chain-main-patch
+          configMap:
+            name: chain-main-patch
+        - name: chain-chatter-patch
+          configMap:
+            name: chain-chatter-patch
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chain-server
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 8009
+      targetPort: 8009
+  selector:
+    app: chain-server

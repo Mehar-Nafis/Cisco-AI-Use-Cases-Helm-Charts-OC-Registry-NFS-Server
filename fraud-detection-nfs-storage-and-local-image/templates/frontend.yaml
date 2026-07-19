@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "frontend") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" (dict "component" "frontend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-detection.labels" . | nindent 8 }}
+        {{- include "fraud-detection.selectorLabels" (dict "component" "frontend") | nindent 8 }}
+    spec:
+      {{- include "fraud-detection.nodeSelector" . | nindent 6 }}
+      {{- include "fraud-detection.imagePullSecrets" . | nindent 6 }}
+      {{- include "fraud-detection.podSecurityContext" . | nindent 6 }}
+      initContainers:
+      - name: patch-next
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.frontend.repository }}:{{ .Values.images.frontend.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            cp -a .next/* /tmp/next-patched/ &&
+            find /tmp/next-patched -name '*.json' -exec sed -i 's/customer_service/customer-service/g' {} +
+        volumeMounts:
+        - name: next-patched
+          mountPath: /tmp/next-patched
+      containers:
+      - name: frontend
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.frontend.repository }}:{{ .Values.images.frontend.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        ports:
+        - containerPort: 3000
+        command: ["npm", "start"]
+        env:
+        - name: CUSTOMER_SERVICE_URL
+          value: "http://customer-service:5000"
+        - name: NEXT_PUBLIC_CUSTOMER_SERVICE_URL
+          value: "http://customer-service:5000"
+        - name: CUSTOMER_SERVICE_HOST
+          value: "customer-service"
+        volumeMounts:
+        - name: next-patched
+          mountPath: /app/.next
+        readinessProbe:
+          tcpSocket:
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 15
+      volumes:
+      - name: next-patched
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - port: 3000
+    targetPort: 3000
+  selector:
+    {{- include "fraud-detection.selectorLabels" (dict "component" "frontend") | nindent 4 }}

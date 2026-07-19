@@ -1,0 +1,80 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory-retriever
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: memory-retriever
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: memory-retriever
+  template:
+    metadata:
+      labels:
+        app: memory-retriever
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      initContainers:
+        - name: copy-app
+          image: {{ .Values.images.memoryRetriever }}
+          command: ["sh", "-c", "cp -r /app/. /mnt/app/"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: app-data
+              mountPath: /mnt/app
+      containers:
+        - name: memory-retriever
+          image: {{ .Values.images.memoryRetriever }}
+          ports:
+            - containerPort: 8011
+          env:
+            - name: MILVUS_HOST
+              value: "milvus"
+            - name: MILVUS_PORT
+              value: "19530"
+          resources:
+            {{- include "chat-assistance.resources.backend" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 8011
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8011
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: app-data
+              mountPath: /app
+      volumes:
+        - name: app-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memory-retriever
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 8011
+      targetPort: 8011
+  selector:
+    app: memory-retriever

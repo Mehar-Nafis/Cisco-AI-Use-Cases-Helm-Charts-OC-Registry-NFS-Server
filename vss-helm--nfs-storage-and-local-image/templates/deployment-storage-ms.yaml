@@ -1,0 +1,92 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $component := "storage-ms" }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-{{ $component }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  serviceName: {{ $fullname }}-{{ $component }}
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- include "vss.nodeSelector" . | nindent 6 }}
+      {{- include "vss.primaryAffinity" . | nindent 6 }}
+      containers:
+        - name: storage-ms
+          image: {{ .Values.storageMs.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: {{ .Values.storageMs.httpPort }}
+              name: http
+          env:
+            - name: LD_LIBRARY_PATH
+              value: "/home/vst/vst_release/prebuilts/x86_64/deepstream:/home/vst/vst_release/prebuilts/x86_64/gst-plugins:/home/vst/vst_release/prebuilts/x86_64:/home/vst/vst_release/prebuilts/x86_64/aws:/usr/local/cuda/lib64"
+            - name: CONTAINER_NAME
+              value: "storage-ms"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: {{ .Values.global.nvidiaVisibleDevices | quote }}
+            - name: ADAPTOR
+              value: "storage"
+            - name: NEED_RECORDING
+              value: "false"
+            - name: NEED_RTSPSERVER
+              value: "false"
+            - name: NEED_STORAGE
+              value: "true"
+            - name: NEED_STREAM_MONITORING
+              value: "false"
+            - name: HTTP_PORT
+              value: {{ .Values.storageMs.httpPort | quote }}
+          resources:
+            {{- toYaml .Values.storageMs.resources | nindent 12 }}
+          volumeMounts:
+            - name: vst-configs
+              mountPath: /home/vst/vst_release/configs
+            - name: vst-data
+              mountPath: /home/vst/vst_release/vst_data
+            - name: vst-video
+              mountPath: /home/vst/vst_release/vst_video
+            - name: shared-media
+              mountPath: /home/vst/vst_release/streamer_videos
+      volumes:
+        - name: vst-configs
+          configMap:
+            name: {{ $fullname }}-vst-configs
+        - name: shared-media
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-vss-shared-media
+  volumeClaimTemplates:
+    - metadata:
+        name: vst-data
+        labels:
+          {{- include "vss.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.vstData.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.vstData.size }}
+        {{- include "vss.storageClass" (dict "global" .Values.persistence.storageClass "local" .Values.persistence.vstData.storageClass) | nindent 8 }}
+    - metadata:
+        name: vst-video
+        labels:
+          {{- include "vss.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.vstVideo.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.vstVideo.size }}
+        {{- include "vss.storageClass" (dict "global" .Values.persistence.storageClass "local" .Values.persistence.vstVideo.storageClass) | nindent 8 }}

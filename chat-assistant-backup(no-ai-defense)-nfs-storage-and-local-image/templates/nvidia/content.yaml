@@ -1,0 +1,122 @@
+{{- if .Values.nvidia.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: content
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: content
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: content
+  template:
+    metadata:
+      labels:
+        app: content
+        gpu-workload: "true"
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      {{- include "chat-assistance.nimAntiAffinity" . | nindent 6 }}
+
+      imagePullSecrets:
+        - name: ncr-registry-secret
+      initContainers:
+        - name: wait-for-llama
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for llama to be ready..."
+              until wget -q -O /dev/null http://llama:8000/v1/health/ready 2>/dev/null; do
+                echo "llama not ready, sleeping 30s..."
+                sleep 30
+              done
+              echo "llama is ready, starting content NIM."
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: content
+          image: {{ .Values.images.content }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+            - name: NIM_NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+            {{- if .Values.nvidia.contentLocalModelPath }}
+            # See llama.yaml's llamaLocalModelPath comment for the full
+            # explanation — same nim_llm_sdk NGC-free local-load branch.
+            - name: NIM_MODEL_NAME
+              value: {{ .Values.nvidia.contentLocalModelPath | quote }}
+            {{- else if .Values.nvidia.contentProfile }}
+            - name: NIM_MODEL_PROFILE
+              value: {{ .Values.nvidia.contentProfile | quote }}
+            {{- end }}
+            - name: NIM_MAX_NUM_SEQS
+              value: {{ .Values.nvidia.maxNumSeqs | default "2" | quote }}
+            # NIM_KVCACHE_PERCENT removed — vLLM-specific; crashes TRT-LLM auto-selected profiles
+          resources:
+            {{- include "chat-assistance.resources.nvidia" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: 8000
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /v1/health/live
+              port: 8000
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            failureThreshold: 30
+          volumeMounts:
+            - name: nim-cache
+              mountPath: /opt/nim/.cache
+      volumes:
+        - name: nim-cache
+          persistentVolumeClaim:
+            claimName: nim-cache-content
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: content
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: llm
+    - port : 80
+      targetPort: 8000
+      name: http-port
+  selector:
+    app: content
+{{- end }}

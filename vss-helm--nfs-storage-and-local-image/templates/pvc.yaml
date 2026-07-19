@@ -1,0 +1,89 @@
+{{- $fullname := include "vss.fullname" . }}
+{{- $globalSC := .Values.persistence.storageClass }}
+
+# ---------------------------------------------------------------------------
+# Shared PVCs — mounted by multiple pods, cannot be volumeClaimTemplates.
+# Exclusive PVCs (redis-data, nim-model-cache, vst-data, vst-video) are
+# managed by volumeClaimTemplates in their respective StatefulSets.
+# ---------------------------------------------------------------------------
+
+# vss-shared-media: shared /tmp across via-server, storage-ms, alert-bridge,
+# alert-inspector-ui, nv-cv-event-detector, cv-ui
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-vss-shared-media
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.vssSharedMedia.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.vssSharedMedia.size }}
+  {{- with (.Values.persistence.vssSharedMedia.storageClass | default $globalSC) }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+---
+# via-ngc-model-cache: NGC model weights shared by via-server + nv-cv-event-detector
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-via-ngc-model-cache
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.viaNgcModelCache.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.viaNgcModelCache.size }}
+  {{- with (.Values.persistence.viaNgcModelCache.storageClass | default $globalSC) }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+---
+# via-hf-cache: HuggingFace cache shared by via-server + nv-cv-event-detector
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-via-hf-cache
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.viaHfCache.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.viaHfCache.size }}
+  {{- with (.Values.persistence.viaHfCache.storageClass | default $globalSC) }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+---
+# nim-model-cache: NIM LLM model weights (Deployment, so PVC managed here)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-nim-model-cache
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "vss.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.nimModelCache.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.nimModelCache.size }}
+  {{- with (.Values.persistence.nimModelCache.storageClass | default $globalSC) }}
+  storageClassName: {{ . | quote }}
+  {{- end }}

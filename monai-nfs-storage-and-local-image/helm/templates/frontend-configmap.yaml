@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monai-frontend-nginx-config
+  labels:
+    app: monai-frontend
+data:
+  default.conf: |
+    server {
+        # OpenShift requires non-root containers to use unprivileged ports (>1024)
+        listen 8080;
+        server_name localhost;
+
+        # Serve static frontend files
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # SPA routing: fallback to index.html for client-side routes
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Reverse proxy API calls to the backend Kubernetes service
+        location /api/ {
+            proxy_pass http://monai-backend:8000/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Increase timeout for inference requests (model can be slow)
+            proxy_read_timeout 120s;
+            proxy_send_timeout 120s;
+
+            # Allow large file uploads
+            client_max_body_size 50M;
+        }
+
+        # Proxy image requests to backend static file server
+        location /images/ {
+            proxy_pass http://monai-backend:8000/images/;
+            proxy_set_header Host $host;
+        }
+
+        # Proxy static/heatmap requests to backend
+        location /static/ {
+            proxy_pass http://monai-backend:8000/static/;
+            proxy_set_header Host $host;
+        }
+    }

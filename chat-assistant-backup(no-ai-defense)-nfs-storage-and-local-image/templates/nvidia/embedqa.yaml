@@ -1,0 +1,99 @@
+{{- if .Values.nvidia.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embedqa
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: embedqa
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: embedqa
+  template:
+    metadata:
+      labels:
+        app: embedqa
+        gpu-workload: "true"
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      {{- include "chat-assistance.nimAntiAffinity" . | nindent 6 }}
+      imagePullSecrets:
+        - name: ncr-registry-secret
+      containers:
+        - name: embedqa
+          image: {{ .Values.images.embedqa }}
+          ports:
+            - containerPort: 8000
+          env:
+            {{- if .Values.nvidia.embedqaLocalModelPath }}
+            # UNVERIFIED: unlike llama/content/topicControl (confirmed
+            # nim_llm_sdk-based), embedqa's actual backend hasn't been
+            # inspected — it may behave like nvclip in the insurguard chart
+            # (unconditional NGC auth regardless of cache) rather than
+            # honoring NIM_MODEL_NAME. Confirm via a live pod's logs/source
+            # before relying on this — see llama.yaml's comment for the
+            # mechanism this assumes.
+            - name: NIM_MODEL_NAME
+              value: {{ .Values.nvidia.embedqaLocalModelPath | quote }}
+            {{- else if .Values.nvidia.embedqaProfile }}
+            - name: NIM_MODEL_PROFILE
+              value: {{ .Values.nvidia.embedqaProfile | quote }}
+            {{- end }}
+            - name: NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+            - name: NIM_NGC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ngc-api-secret
+                  key: api-key
+          resources:
+            {{- include "chat-assistance.resources.nvidia" . | nindent 12 }}
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/health/live
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+          volumeMounts:
+            - name: nim-cache
+              mountPath: /opt/nim/.cache
+      volumes:
+        - name: nim-cache
+          persistentVolumeClaim:
+            claimName: nim-cache-embedqa
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: embedqa
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: llm
+    - port : 80
+      targetPort: 8000
+      name: http-port
+  selector:
+    app: embedqa
+{{- end }}

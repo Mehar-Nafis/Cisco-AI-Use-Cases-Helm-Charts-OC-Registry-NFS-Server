@@ -1,0 +1,94 @@
+---
+# Helm hook Job: re-applies the idempotent init_db.sql seed on every
+# install/upgrade. Postgres only executes /docker-entrypoint-initdb.d on a
+# fresh (empty) PVC, so without this hook seed changes (e.g. extended
+# policy end dates) never reach an already-initialized database.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-seed
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-deleted
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: db-seed
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      restartPolicy: OnFailure
+      containers:
+        - name: db-seed
+          image: {{ .Values.images.postgres }}
+          command:
+            - bash
+            - -c
+            - |
+              set -u
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              HOST=insurance-postgres
+
+              echo "Waiting for postgres at $HOST..."
+              for i in $(seq 1 30); do
+                if pg_isready -h "$HOST" -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+                  echo "Postgres is ready (attempt $i)."
+                  break
+                fi
+                echo "Attempt $i/30: not ready, retrying in 5s..."
+                sleep 5
+              done
+              if ! pg_isready -h "$HOST" -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+                echo "ERROR: postgres never became ready."
+                exit 1
+              fi
+
+              # init_db.sql is idempotent (IF NOT EXISTS / ON CONFLICT).
+              # Duplicate-constraint errors on re-runs are expected and
+              # harmless, so ON_ERROR_STOP stays off.
+              psql -h "$HOST" -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /seed/init_db.sql
+
+              echo "Current user_policies after seeding:"
+              psql -h "$HOST" -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+                -c "SELECT user_id, policy_id, start_date, end_date FROM insurance.user_policies ORDER BY user_id;"
+              echo "Seed applied."
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: init-db
+              mountPath: /seed
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: init-db
+          configMap:
+            name: app-config
+            items:
+              - key: init_db.sql
+                path: init_db.sql

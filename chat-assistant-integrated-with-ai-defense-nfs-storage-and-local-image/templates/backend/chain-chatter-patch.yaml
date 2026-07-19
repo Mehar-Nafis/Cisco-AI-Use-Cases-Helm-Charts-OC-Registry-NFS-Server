@@ -1,0 +1,146 @@
+---
+# Patch for chatter.py: make the final-answer LLM call compatible with Cisco
+# AI Defense (the inspection proxy in front of the NIM).
+#   1. AI Defense does NOT support SSE streaming — it must buffer the whole
+#      response to inspect it and rejects stream=True ("Invalid request headers"),
+#      which broke the original streaming consumer ("Unterminated string").
+#      So we call the model non-streaming and emit the answer as one chunk.
+#   2. When AI Defense blocks a prompt it returns its own payload
+#      ("This request violates rules: ...") in place of a model answer; we detect
+#      that and surface the configured unsafe_message instead of a blank bubble.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chain-chatter-patch
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+data:
+  chatter.py: |
+    # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+
+    from typing import AsyncGenerator
+    from openai import AsyncOpenAI
+    from langgraph.config import get_stream_writer
+    from .agenttypes import State
+    import json
+    import os
+    import logging
+    import sys
+    import time
+
+
+    def setup_logging():
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            stream=sys.stdout
+        )
+
+    # Configuration will be loaded by the main application
+
+
+    class ChatterAgent:
+        def __init__(self, config):
+            """
+            Initialize the ChatterAgent with LLM configuration.
+
+            Args:
+                config: Configuration instance
+            """
+            logging.info(f"ChatterAgent.__init__() | Initializing with llm_name={config.llm_name}, llm_port={config.llm_port}")
+            self.llm_name = config.llm_name
+            self.llm_port = config.llm_port
+            self.config = config
+
+            self.model = AsyncOpenAI(
+                base_url=config.llm_port,
+                api_key=os.environ["LLM_API_KEY"]
+            )
+            logging.info(f"ChatterAgent.__init__() | Initialization complete")
+
+        async def invoke(
+            self,
+            state: State,
+            verbose: bool = True
+            ) -> AsyncGenerator[State, None]:
+            """
+            Process the user query and generate a response.
+            """
+            logging.info(f"ChatterAgent.invoke() | Starting with query: {state.query}")
+            output_state = state
+            logging.info(f"ChatterAgent.invoke() | State retrieved.")
+
+            # Build user message with all context
+            user_message = f"QUERY: {state.query}"
+
+            if state.context and state.context.strip():
+                user_message += f"\nPREVIOUS CONTEXT: {state.context}"
+
+            if state.policy_user_id:
+                user_message += f"\nUSER_ID: {state.policy_user_id}"
+            else:
+                user_message += f"\nUSER_ID: Not provided yet"
+
+            # Check if this is a user ID only query
+            import re
+            user_id_match = re.match(r'^\s*(user\d+)\s*$', state.query.strip(), re.IGNORECASE)
+            if user_id_match:
+                # Check if context contains policy information for this user
+                has_policy_info = bool(state.context and ("policy" in state.context.lower() or "coverage" in state.context.lower() or "insurance" in state.context.lower()))
+                user_message += f"\nNOTE: User just provided their ID: {user_id_match.group(1)}. This is a user ID confirmation query. Policy info available: {has_policy_info}"
+            elif state.policy_user_id and not user_id_match:
+                user_message += f"\nNOTE: User ID is already confirmed as {state.policy_user_id}. This is NOT a user ID confirmation query. Answer only from retrieved information for this specific user."
+
+            messages = [
+                {"role": "system", "content": self.config.chatter_prompt},
+                {"role": "user", "content": user_message}
+            ]
+
+            start = time.monotonic()
+
+            logging.info(f"ChatterAgent.invoke() | Context length is less than memory length")
+            full_response = ""
+
+            writer = get_stream_writer()
+
+            # Send empty images payload to prevent document names from showing
+            writer(f"{json.dumps({'type' : 'images' , 'payload' : {}, 'timestamp' : time.time()})}")
+
+            # NOTE: Cisco AI Defense (the inspection proxy in front of the NIM) does
+            # NOT support SSE streaming — it buffers the full response to inspect it
+            # and rejects stream=True requests. So call the model non-streaming and
+            # emit the complete answer as a single content chunk.
+            response = await self.model.chat.completions.create(
+                model=self.llm_name,
+                messages=messages,
+                stream=False,
+                temperature=0.0,
+                max_tokens=self.config.memory_length
+            )
+
+            full_response = (response.choices[0].message.content or "").strip()
+
+            # If AI Defense blocked the request, it returns its own payload
+            # (e.g. "This request violates rules: ...") in place of a model answer.
+            # Detect that and surface a clean, user-facing message instead.
+            if "violates rules" in full_response.lower():
+                full_response = getattr(
+                    self.config, "unsafe_message",
+                    "⚠️ This request was blocked by Cisco AI Defense per the content policy."
+                )
+                logging.info("ChatterAgent.invoke() | AI Defense block detected — returning unsafe_message")
+
+            ftt = time.monotonic() - start
+            logging.info(f"ChatterAgent.invoke() | First token time: {ftt}")
+            output_state.timings["first_token"] = ftt
+
+            output_state.response = full_response
+            writer(f"{json.dumps({'type' : 'content', 'payload' : full_response, 'timestamp' : time.time()})}")
+
+            logging.info(f"ChatterAgent.invoke() | Returning final state with response: {output_state.response[0:50]}")
+
+            end = time.monotonic()
+            output_state.timings["chatter"] = end - start
+            return(output_state)

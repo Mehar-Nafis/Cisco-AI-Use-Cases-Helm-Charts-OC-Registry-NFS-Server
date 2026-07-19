@@ -1,0 +1,332 @@
+# =============================================================================
+# Chat Assistance – Helm Values
+# =============================================================================
+
+# Target OpenShift namespace / project
+namespace: chat-assistant
+
+# ---------------------------------------------------------------------------
+# NGC / NIM credentials
+# Pass at install time:
+#   helm install ... --set ngc.apiKey=<YOUR_KEY>
+# Or via a private values file:
+#   helm install ... -f my-secrets.yaml
+# ---------------------------------------------------------------------------
+ngc:
+  # Required – the chart will fail to render if left empty
+  apiKey: ""
+  # NGC registry username (leave as default for NIM)
+  registryUser: "$oauthtoken"
+
+# ---------------------------------------------------------------------------
+# Cisco AI Defense — proxy that inspects LLM traffic before it reaches the NIMs.
+# When enabled, chat-completions calls are routed through the proxy connection
+# URLs instead of directly to the in-cluster Services:
+#   base = <proxyBase>/<connectionId>/v1
+# Embeddings (embedqa) are intentionally NOT routed through AI Defense — an
+# embeddings request has no `messages` to inspect, so the proxy rejects it.
+# Pass the token at install time:
+#   helm install ... --set aiDefense.token=<YOUR_TOKEN>
+# ---------------------------------------------------------------------------
+aiDefense:
+  enabled: true
+  # Proxy base, up to and including ".../connections" (no trailing slash)
+  proxyBase: "http://ai-defense-proxy-service.apps.apjcaipod.dcloud.cisco.com/0a063430-572b-4019-a6ac-fa2d3208028f/connections"
+  # Bearer token the proxy enforces. Static value (same token used in testing).
+  token: "test"
+  # Connection IDs per model (embedqa omitted on purpose — see note above)
+  connections:
+    llama: "89c09c29-3900-44ff-9f46-e027be94d2d1"
+    content: "270a208b-4e4d-4c6b-8ff6-f48fa57d9148"
+    topicControl: "bf95e55e-0cbf-4a3b-a574-1c966ebbf89a"
+
+# ---------------------------------------------------------------------------
+# Database credentials
+# ---------------------------------------------------------------------------
+db:
+  postgres:
+    database: insurance_db
+    user: insurance_user
+    password: insurance_password
+  mongo:
+    database: insurance_users
+  minio:
+    rootUser: minioadmin
+    rootPassword: minioadmin
+    accessKey: minioadmin
+    secretKey: minioadmin
+
+# ---------------------------------------------------------------------------
+# Persistent storage
+# storageClassName: "" → use the cluster default StorageClass
+# ---------------------------------------------------------------------------
+storage:
+  storageClassName: "lvms-vg1"
+  etcd:
+    size: 1Gi
+  minio:
+    size: 5Gi
+  milvus:
+    size: 5Gi
+  postgres:
+    size: 5Gi
+  mongo:
+    size: 5Gi
+  memoryRetriever:
+    size: 1Gi
+  nimCache:
+    llama: 30Gi
+    content: 30Gi
+    topicControl: 30Gi
+    # embedqa previously had no persistent cache at all (ephemeral container
+    # storage only) — always re-downloaded from NGC on every restart.
+    embedqa: 15Gi
+  # HF/fastembed cache for rails — previously an emptyDir (ephemeral),
+  # guaranteeing a huggingface.co reach-out on every pod restart.
+  hfCache:
+    rails: 15Gi
+
+# ---------------------------------------------------------------------------
+# Container images
+# ---------------------------------------------------------------------------
+images:
+  # Infrastructure
+  etcd:     image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:etcd
+  minio:    image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:minio
+  milvus:   image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:milvus
+  postgres: image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:postgres
+  mongodb:  image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:mongo
+  # Backend services
+  chainServer:       image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:chain-server
+  catalogRetriever:  image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:catalog-retriever
+  memoryRetriever:   image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:memory-retriever
+  rails:             image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:rails
+  textToSqlAgent:    image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:text-to-sql-agent
+  userManagement:    image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:user-management
+  notificationAgent: image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:notification-agent
+  # NVIDIA / NIM (pulled from nvcr.io – unchanged)
+  llama: "nvcr.io/nim/meta/llama-3.1-8b-instruct:1.8.6"
+  embedqa: "nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1.6"
+  content: "nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-content-safety:1.10.1"
+  topicControl: "nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-topic-control:1.10.1"
+  # Frontend
+  frontend: image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:frontend
+
+# Default replica count for all deployments
+replicaCount: 1
+
+# ---------------------------------------------------------------------------
+# Global node selector – pins ALL pods to a specific node group.
+# Uses existing nvidia.com/gpu.product labels set by the NVIDIA GPU operator.
+# Deploy on L40S (wn1 + wn2):
+#   helm install chat-assistant . -f values.yaml -n chat-assistant \
+#     --set ngc.apiKey=<YOUR_KEY>
+# Deploy on RTX (c845):
+#   helm install chat-assistant . -f values.yaml -f values-rtx.yaml -n chat-assistant \
+#     --set ngc.apiKey=<YOUR_KEY>
+# Leave empty {} to let Kubernetes schedule freely.
+# ---------------------------------------------------------------------------
+nodeSelector:
+  nvidia.com/gpu.product: "NVIDIA-L40S-SHARED"
+
+# ---------------------------------------------------------------------------
+# NVIDIA feature flag
+# Set nvidia.enabled: false to skip all GPU workloads (riva, llama, embedqa, etc.)
+# ---------------------------------------------------------------------------
+nvidia:
+  enabled: true
+  gpuCount: 1
+  llamaGpuCount: 1
+  # 2 nodes × 2 L40S per node = 4 physical GPUs, each time-sliced into 2 → 8 virtual slices.
+  # Pod anti-affinity spreads NIMs across nodes so each physical L40S (48 GB) hosts one NIM.
+  kvCachePercent: "75"
+  maxNumSeqs: "4"
+  # NIM_STREAMING_TOKEN_CHUNK_SIZE: tokens per SSE flush — larger = smoother streaming
+  streamingTokenChunkSize: "20"
+  # Start streaming tokens before full prompt is processed
+  enablePromptStreaming: "1"
+  # Explicit NIM model profiles — bypasses NGC hub lookup (inject_ngc_hub / repo.get_all())
+  # which requires org-level NGC permissions. Leave empty ("") to let NIM auto-select (needs NGC access).
+  # L40S TRT-LLM profiles avoid the chunked-prefill latency caused by vllm-bf16-tp1.
+  llamaProfile: ""  # NIM 1.8.6 auto-selects from detected compatible profiles
+  contentProfile: ""
+  topicControlProfile: ""
+  embedqaProfile: ""
+  # ---------------------------------------------------------------------------
+  # RECOMMENDED over *Profile above, for the same reason as the insurguard
+  # chart's llamaParser.localModelPath: set to the absolute in-container path
+  # (under /opt/nim/.cache, i.e. within the matching nim-cache-<name> PVC) of
+  # an already-downloaded HF-format model snapshot, e.g.
+  #   /opt/nim/.cache/ngc/hub/models--nim--<org>--<model>/snapshots/<rev>
+  # This sets NIM_MODEL_NAME, which — for nim_llm_sdk-based NIMs — takes an
+  # early branch in inject_ngc_hub that loads straight from disk and never
+  # reaches the manifest/NGC profile-lookup code at all (confirmed by reading
+  # that function's source directly out of a running pod, on an identical NIM
+  # image, in the insurguard chart). Find the actual snapshot path by
+  # inspecting each nim-cache-<name> PVC once it's warm (see
+  # discover-nfs-direct.sh). Takes priority over *Profile above if both set.
+  #
+  # NOTE: confirmed for llama/content/topicControl only by analogy (same NIM
+  # SDK family as insurguard's llama-parser/nemotron-vlm) — NOT independently
+  # verified against these exact images. embedqa is a different kind of NIM
+  # (embedding, not chat) and may behave like insurguard's nvclip instead
+  # (unconditional NGC auth regardless of cache) — confirm via a live pod's
+  # logs/source before trusting any of these for real air-gap resilience.
+  #
+  # Also note: ngc.apiKey remains required regardless, for pulling these
+  # unmirrored nvcr.io images in the first place (see ncr-registry-secret in
+  # templates/secrets.yaml) — these fields only eliminate the in-container
+  # runtime NGC dependency, not the image-pull one. Mirroring these 4 images
+  # into an internal registry (out of scope here, same as insurguard's
+  # deferred etcd/minio/postgres) would be needed to drop ngc.apiKey entirely.
+  llamaLocalModelPath: ""
+  contentLocalModelPath: ""
+  topicControlLocalModelPath: ""
+  embedqaLocalModelPath: ""
+
+# ---------------------------------------------------------------------------
+# OpenShift Routes (HAProxy path-based – one Route per service)
+# Leave host blank for OpenShift to auto-assign a hostname.
+# All routes will share the same auto-assigned hostname.
+# ---------------------------------------------------------------------------
+route:
+  host: "route-frontend-chat-assistant.apps.apjcaipod.dcloud.cisco.com"
+  tls:
+    enabled: true        # Edge-terminated TLS (recommended)
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+# ---------------------------------------------------------------------------
+# Resource requests & limits
+# ---------------------------------------------------------------------------
+resources:
+  infra:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  backend:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  nvidia:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 48Gi
+  frontend:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+# ---------------------------------------------------------------------------
+# Shared service config files
+# These are mounted inside containers at /app/shared/configs/<service>/
+# IMPORTANT: Replace the placeholder values below with your actual config content.
+# ---------------------------------------------------------------------------
+sharedConfigs:
+  # Mounted at: /app/shared/configs/catalog_retriever/config.yaml
+  catalogRetriever: |
+    milvus_host: milvus
+    milvus_port: "19530"
+    text_embed_host: embedqa
+    text_embed_port: "http://embedqa:8000/v1"
+    image_embed_host: embedqa
+    image_embed_port: "http://embedqa:8000/v1"
+    text_model_name: nvidia/nv-embedqa-e5-v5
+    image_model_name: nvidia/nv-embedqa-e5-v5
+    db_port: "tcp://milvus:19530"
+    db_name: insurance_db
+    db_user: insurance_user
+    db_password: insurance_password
+    pg_host: insurance-postgres
+    pg_port: "5432"
+    pg_name: insurance_db
+    pg_user: insurance_user
+    pg_password: insurance_password
+    llm_host: llama
+    llm_port: "8000"
+    llm_model_name: meta/llama-3.1-8b-instruct
+    sim_threshold: 0.2
+    top_k: 4
+    chunk_size: 256
+    chunk_overlap: 50
+    text_collection: catalog_text_collection
+    image_collection: catalog_image_collection
+    mongo_host: insurance-mongodb
+    mongo_port: "27017"
+    mongo_db: insurance_users
+
+  memoryRetriever: |
+    database_url: "sqlite:////tmp/memory.db"
+    milvus_host: milvus
+    milvus_port: "19530"
+
+  chainServer: |
+    # Routed through Cisco AI Defense (llama connection) instead of http://llama:8000/v1
+    llm_port: "http://ai-defense-proxy-service.apps.apjcaipod.dcloud.cisco.com/0a063430-572b-4019-a6ac-fa2d3208028f/connections/89c09c29-3900-44ff-9f46-e027be94d2d1/v1"
+    llm_name: meta/llama-3.1-8b-instruct
+    retriever_port: "http://catalog-retriever:8010"
+    memory_port: "http://memory-retriever:8011"
+    rails_port: "http://rails:8012"
+    memory_length: 4096
+    top_k_retrieve: 4
+    multimodal: true
+    unsafe_message: "I'm sorry, but I'm unable to assist with that request as it may violate our content policy."
+    routing_prompt: "You are a routing assistant for an insurance company. Based on the user's query, determine which agent should handle it. Available agents: catalog (product/policy information), memory (conversation history), general (general inquiries)."
+    chatter_prompt: |
+      You are a helpful insurance assistant. Answer in 2-4 sentences using ONLY the PREVIOUS CONTEXT provided. Be direct and concise — no filler, no repetition.
+
+      RULES:
+      1. ONLY use facts explicitly in the PREVIOUS CONTEXT. Never fabricate policy details (numbers, amounts, dates, limits).
+      2. If the context lacks relevant info, say: "This information is not available in your policy documents."
+      3. If the user asks about insurance they don't have, say their policy does not include that coverage.
+      4. Do not combine information from different policy types.
+      5. Use bullet points for listing coverage details. Keep responses short.
+    categories:
+      - retriever
+      - chatter
+      - cart
+      - notification
+      - text_to_sql
+      - claim
+    agent_choices:
+      - retriever
+      - chatter
+      - cart
+      - notification
+      - text_to_sql
+      - claim
+
+  rails:
+    # Mounted at: /app/shared/configs/rails/config.yml
+    # Replace with actual NemoGuardrails config.yml content
+    # All three chat models are routed through Cisco AI Defense via base_url.
+    configYml: |
+      # TODO: paste the rest of your NemoGuardrails config.yml content here
+      models:
+        - type: main
+          engine: nim
+          model: meta/llama-3.1-8b-instruct
+          parameters:
+            base_url: "http://ai-defense-proxy-service.apps.apjcaipod.dcloud.cisco.com/0a063430-572b-4019-a6ac-fa2d3208028f/connections/89c09c29-3900-44ff-9f46-e027be94d2d1/v1"
+        - type: content_safety
+          engine: nim
+          model: nvidia/llama-3.1-nemoguard-8b-content-safety
+          parameters:
+            base_url: "http://ai-defense-proxy-service.apps.apjcaipod.dcloud.cisco.com/0a063430-572b-4019-a6ac-fa2d3208028f/connections/270a208b-4e4d-4c6b-8ff6-f48fa57d9148/v1"
+        - type: topic_control
+          engine: nim
+          model: nvidia/llama-3.1-nemoguard-8b-topic-control
+          parameters:
+            base_url: "http://ai-defense-proxy-service.apps.apjcaipod.dcloud.cisco.com/0a063430-572b-4019-a6ac-fa2d3208028f/connections/bf95e55e-0cbf-4a3b-a574-1c966ebbf89a/v1"

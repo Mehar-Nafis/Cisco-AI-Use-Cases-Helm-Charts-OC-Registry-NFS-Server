@@ -1,0 +1,69 @@
+---
+# Helm hook Job: triggers POST /reindex on catalog-retriever after install/upgrade.
+# Waits for the catalog-retriever to be healthy before calling /reindex,
+# so the PDFs mounted from policy-documents ConfigMap get indexed into Milvus.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: reindex-documents
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-deleted
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: reindex-documents
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      restartPolicy: OnFailure
+      containers:
+        - name: reindex
+          image: {{ .Values.images.chainServer }}
+          command:
+            - python3
+            - -c
+            - |
+              import requests, time, sys
+
+              url = "http://catalog-retriever:8010"
+              print("Waiting for catalog-retriever to be ready...")
+
+              for i in range(30):
+                  try:
+                      r = requests.get(f"{url}/health", timeout=5)
+                      if r.status_code == 200:
+                          print(f"Catalog-retriever is ready! (attempt {i+1})")
+                          break
+                  except Exception as e:
+                      print(f"Attempt {i+1}/30: not ready ({e}), retrying in 10s...")
+                  time.sleep(10)
+              else:
+                  print("ERROR: Catalog-retriever never became ready after 5 minutes.")
+                  sys.exit(1)
+
+              print("Triggering document reindex...")
+              try:
+                  r = requests.post(f"{url}/reindex", timeout=300)
+                  result = r.json()
+                  print(f"Reindex response ({r.status_code}): {result}")
+                  if r.status_code != 200 or result.get("status") == "error":
+                      print(f"ERROR: Reindex failed: {result.get('message', 'unknown error')}")
+                      sys.exit(1)
+                  print("Documents successfully indexed into Milvus!")
+              except Exception as e:
+                  print(f"ERROR: Failed to call /reindex: {e}")
+                  sys.exit(1)
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

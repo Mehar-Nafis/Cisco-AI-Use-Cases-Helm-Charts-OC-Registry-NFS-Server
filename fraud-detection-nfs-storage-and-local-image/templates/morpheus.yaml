@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: morpheus-pipeline
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "morpheus-pipeline") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" (dict "component" "morpheus-pipeline") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-detection.labels" . | nindent 8 }}
+        {{- include "fraud-detection.selectorLabels" (dict "component" "morpheus-pipeline") | nindent 8 }}
+    spec:
+      {{- include "fraud-detection.nodeSelector" . | nindent 6 }}
+      {{- include "fraud-detection.imagePullSecrets" . | nindent 6 }}
+      {{- include "fraud-detection.podSecurityContext" . | nindent 6 }}
+      containers:
+      - name: morpheus-pipeline
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.morpheusPipeline.repository }}:{{ .Values.images.morpheusPipeline.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            python -m ensurepip && python -m pip install kafka-python numpy pandas scikit-learn==1.6.1 tritonclient[http] category_encoders && python pipeline_custom.py & sleep 10 && python producer.py --speed 5 & wait
+        env:
+        - name: KAFKA_BROKER
+          value: "kafka:29092"
+        - name: TRITON_URL
+          value: "tritonserver:8005"
+        - name: KAFKA_TOPIC_IN
+          value: "transactions_raw"
+        - name: HOME
+          value: "/tmp"
+        - name: PIP_CACHE_DIR
+          value: "/tmp/pip-cache"
+        {{- if gt (int .Values.gpu.morpheusCount) 0 }}
+        resources:
+          limits:
+            nvidia.com/gpu: {{ .Values.gpu.morpheusCount }}
+        {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: morpheus-priority
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    {{- include "fraud-detection.selectorLabels" (dict "component" "morpheus-priority") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" (dict "component" "morpheus-priority") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-detection.labels" . | nindent 8 }}
+        {{- include "fraud-detection.selectorLabels" (dict "component" "morpheus-priority") | nindent 8 }}
+    spec:
+      {{- include "fraud-detection.nodeSelector" . | nindent 6 }}
+      {{- include "fraud-detection.imagePullSecrets" . | nindent 6 }}
+      {{- include "fraud-detection.podSecurityContext" . | nindent 6 }}
+      containers:
+      - name: morpheus-priority
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.morpheusPriority.repository }}:{{ .Values.images.morpheusPriority.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            python -m ensurepip && python -m pip install kafka-python numpy pandas scikit-learn==1.6.1 tritonclient[http] category_encoders && python pipeline_custom.py
+        env:
+        - name: KAFKA_BROKER
+          value: "kafka:29092"
+        - name: TRITON_URL
+          value: "tritonserver:8005"
+        - name: KAFKA_TOPIC_IN
+          value: "transactions_priority"
+        - name: HOME
+          value: "/tmp"
+        - name: PIP_CACHE_DIR
+          value: "/tmp/pip-cache"
+        {{- if gt (int .Values.gpu.morpheusCount) 0 }}
+        resources:
+          limits:
+            nvidia.com/gpu: {{ .Values.gpu.morpheusCount }}
+        {{- end }}

@@ -1,0 +1,118 @@
+---
+# Milvus – StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: milvus
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+    app: milvus
+spec:
+  serviceName: milvus
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: milvus
+  template:
+    metadata:
+      labels:
+        app: milvus
+        {{- include "chat-assistance.labels" . | nindent 8 }}
+    spec:
+      {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
+      # Wait for etcd and MinIO to be ready before starting Milvus
+      initContainers:
+        - name: wait-for-etcd
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z etcd 2379; do echo waiting for etcd; sleep 3; done']
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+        - name: wait-for-minio
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z minio 9000; do echo waiting for minio; sleep 3; done']
+          securityContext:
+            {{- include "chat-assistance.securityContext" . | nindent 12 }}
+      containers:
+        - name: milvus
+          image: {{ .Values.images.milvus }}
+          command: ["milvus", "run", "standalone"]
+          ports:
+            - containerPort: 19530
+              name: milvus
+            - containerPort: 9091
+              name: metrics
+          env:
+            - name: ETCD_ENDPOINTS
+              value: "http://etcd:2379"
+            - name: MINIO_ADDRESS
+              value: "minio:9000"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: MINIO_SECRET_KEY
+            - name: COMMON_STORAGETYPE
+              value: local
+          # Milvus requires Unconfined seccomp to run its internal processes
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- include "chat-assistance.resources.infra" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9091
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9091
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          volumeMounts:
+            - name: milvus-storage
+              mountPath: /var/lib/milvus
+  volumeClaimTemplates:
+    - metadata:
+        name: milvus-storage
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.storage.storageClassName }}
+        storageClassName: {{ .Values.storage.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.milvus.size }}
+---
+# Milvus – Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: milvus
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 19530
+      targetPort: 19530
+      name: milvus
+    - port: 9091
+      targetPort: 9091
+      name: metrics
+  selector:
+    app: milvus

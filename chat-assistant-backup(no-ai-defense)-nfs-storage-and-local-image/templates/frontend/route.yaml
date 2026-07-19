@@ -1,0 +1,296 @@
+{{- $tls := .Values.route.tls }}
+{{- $host := .Values.route.host }}
+
+# ---------------------------------------------------------------------------
+# OpenShift Routes – HAProxy path-based routing (no nginx needed)
+# All routes share the same hostname; HAProxy dispatches by path prefix.
+# ---------------------------------------------------------------------------
+
+# Frontend (catch-all – must be listed LAST in HAProxy priority, use weight)
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-frontend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/timeout: 60s
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /
+  to:
+    kind: Service
+    name: frontend
+    weight: 100
+  port:
+    targetPort: 3000
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# Chain Server query/stream API (frontend path alias /api/query)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-query
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/timeout: 600s
+    haproxy.router.openshift.io/rewrite-target: /query
+    # SSE streaming: treat as long-lived tunnel so HAProxy flushes chunks immediately
+    haproxy.router.openshift.io/websocket: "true"
+    haproxy.router.openshift.io/timeout-tunnel: 600s
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/query
+  to:
+    kind: Service
+    name: chain-server
+    weight: 100
+  port:
+    targetPort: 8009
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# Chain Server API
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-chain-server
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s
+    haproxy.router.openshift.io/rewrite-target: /
+    # SSE streaming: treat as long-lived tunnel so HAProxy flushes chunks immediately
+    haproxy.router.openshift.io/websocket: "true"
+    haproxy.router.openshift.io/timeout-tunnel: 300s
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/chain-server
+  to:
+    kind: Service
+    name: chain-server
+    weight: 100
+  port:
+    targetPort: 8009
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# Catalog Retriever API
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-catalog-retriever
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/rewrite-target: /
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/catalog-retriever
+  to:
+    kind: Service
+    name: catalog-retriever
+    weight: 100
+  port:
+    targetPort: 8010
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# Memory Retriever API
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-memory-retriever
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/rewrite-target: /
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/memory-retriever
+  to:
+    kind: Service
+    name: memory-retriever
+    weight: 100
+  port:
+    targetPort: 8011
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# Rails API
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-rails
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/rewrite-target: /
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/rails
+  to:
+    kind: Service
+    name: rails
+    weight: 100
+  port:
+    targetPort: 8012
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# User Management API
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-user-management
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/rewrite-target: /
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/user-management
+  to:
+    kind: Service
+    name: user-management
+    weight: 100
+  port:
+    targetPort: 8014
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# User Management API (frontend path alias /api/users)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-users
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/rewrite-target: /
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/users
+  to:
+    kind: Service
+    name: user-management
+    weight: 100
+  port:
+    targetPort: 8014
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# Notification Agent API
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-notification-agent
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/rewrite-target: /
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/notifications
+  to:
+    kind: Service
+    name: notification-agent
+    weight: 100
+  port:
+    targetPort: 8015
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+---
+# Text-to-SQL Agent API
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: route-text-to-sql-agent
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "chat-assistance.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/rewrite-target: /
+spec:
+  {{- if $host }}
+  host: {{ $host }}
+  {{- end }}
+  path: /api/text-to-sql
+  to:
+    kind: Service
+    name: text-to-sql-agent
+    weight: 100
+  port:
+    targetPort: 8017
+  {{- if $tls.enabled }}
+  tls:
+    termination: {{ $tls.termination }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
