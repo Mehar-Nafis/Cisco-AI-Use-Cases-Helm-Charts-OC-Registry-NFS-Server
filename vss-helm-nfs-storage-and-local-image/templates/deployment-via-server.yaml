@@ -22,19 +22,25 @@ spec:
       {{- include "vss.nodeSelector" . | nindent 6 }}
       {{- include "vss.primaryAffinity" . | nindent 6 }}
       hostIPC: {{ .Values.viaServer.hostIPC }}
-      {{- /* via-server is a vendor image with files owned by a specific
-      non-root UID it can't run as an arbitrary OpenShift UID (confirmed
-      live: flashinfer/vLLM crashed on permission errors under the default
-      security context) — the chart's own _helpers.tpl comment already
-      documents this exact case and names via-server explicitly. Needs
-      `oc adm policy add-scc-to-user anyuid -z vss-sa -n <namespace>`. */}}
-      {{ include "vss.anyuidPodSecurityContext" . | nindent 6 }}
+      {{- /* REVERTED from vss.anyuidPodSecurityContext + runAsUser:0 (see
+      git history / prior comment here) — confirmed live that was wrong for
+      this component specifically: with root forced, this pod (sharing the
+      RWO shared-media PVC at /tmp with itself across pod generations, same
+      node) failed on /tmp/pids.txt, /tmp/via-logs/*, and a sqlite DB under
+      /tmp — a UID/SELinux-label mismatch against content an earlier,
+      non-root pod generation had already written there, not a real "needs
+      root" requirement. The default (non-anyuid) security context plus
+      HOME=/tmp below was already sufficient — confirmed by a pod running
+      fine under exactly that combination. Only storage-ms actually needs
+      the anyuid/root treatment; the chart's original comment grouping both
+      together was only half right. */}}
+      {{ include "vss.podSecurityContext" . | nindent 6 }}
       containers:
         - name: via-server
           image: {{ .Values.viaServer.image }}
           imagePullPolicy: IfNotPresent
           securityContext:
-            {{- include "vss.anyuidContainerSecurityContext" . | nindent 12 }}
+            {{- include "vss.containerSecurityContext" . | nindent 12 }}
           ports:
             - containerPort: {{ .Values.viaServer.backendPort }}
               name: backend

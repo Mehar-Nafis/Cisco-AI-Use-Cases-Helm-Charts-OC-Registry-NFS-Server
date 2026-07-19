@@ -19,13 +19,19 @@ spec:
         {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
     spec:
       serviceAccountName: {{ include "vss.serviceAccountName" . }}
+      {{- /* Was unconditional "ngc-secret" — that secret is never created
+      anywhere in this chart. templates/secret.yaml actually creates
+      "{{ include "vss.fullname" . }}-ngc-registry", CONDITIONAL on
+      global.ngcApiKey being set. Referencing it unconditionally broke image
+      pulls when ngcApiKey was unset (a nonexistent imagePullSecret is a
+      hard pull failure, not a silent no-op) — now that the image itself
+      comes from the internal nim-mirror instead of raw nvcr.io, this
+      secret isn't even needed once ngcApiKey is dropped for the fully
+      air-gapped case. */}}
+      {{- if .Values.global.ngcApiKey }}
       imagePullSecrets:
-        # Was "ngc-secret" — that secret is never created anywhere in this
-        # chart. templates/secret.yaml actually creates
-        # "{{ include "vss.fullname" . }}-ngc-registry" (conditional on
-        # global.ngcApiKey being set). The old name silently broke image
-        # pulls for this component regardless of any air-gap fix.
         - name: {{ $fullname }}-ngc-registry
+      {{- end }}
       {{- include "vss.nodeSelector" . | nindent 6 }}
       {{- include "vss.secondaryAffinity" . | nindent 6 }}
       {{- include "vss.podSecurityContext" . | nindent 6 }}

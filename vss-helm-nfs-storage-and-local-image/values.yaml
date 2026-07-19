@@ -56,7 +56,7 @@ serviceAccount:
 # Exposes: VSS_ENGINE_URL used by manufacturing_qa/.env
 # -----------------------------------------------------------------------------
 viaServer:
-  image: nvcr.io/nvidia/blueprint/vss-engine:2.4.1
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/vss-engine:2.4.1
   # backendPort drives VSS_ENGINE_URL in manufacturing_qa configmap
   backendPort: 8076
   frontendPort: 9000
@@ -89,7 +89,7 @@ viaServer:
 # Compose source: event_reviewer/compose.yaml → storage-ms
 # -----------------------------------------------------------------------------
 storageMs:
-  image: nvcr.io/nvidia/blueprint/vst-storage:2.1.0-25.11.1.1
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/vst-storage:2.1.0-25.11.1.1
   httpPort: 30000
   installAdditionalPackages: "true"
   resources:
@@ -118,7 +118,7 @@ redis:
 # Compose source: event_reviewer/compose.yaml → alert-bridge
 # -----------------------------------------------------------------------------
 alertBridge:
-  image: nvcr.io/nvidia/blueprint/alert-bridge:0.19.0-multiarch
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/alert-bridge:0.19.0-multiarch
   fastapiPort: 9080
   healthPort: 9081
   resources:
@@ -133,7 +133,7 @@ alertBridge:
 # Compose source: event_reviewer/compose.yaml → alert-inspector-ui
 # -----------------------------------------------------------------------------
 alertInspectorUi:
-  image: nvcr.io/nvidia/blueprint/vss-alert-inspector-ui:2.4.1
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/vss-alert-inspector-ui:2.4.1
   gradioPort: 7860
   backendPort: 8500
   resources:
@@ -164,7 +164,7 @@ apiGateway:
 # Exposes: CV_DETECTOR_API_URL used by manufacturing_qa/.env
 # -----------------------------------------------------------------------------
 cvEventDetector:
-  image: nvcr.io/nvidia/blueprint/nv-cv-event-detector:2.4.0
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/nv-cv-event-detector:2.4.0
   apiPort: 23491
   useGdino: "true"
   disableSomOverlay: "false"
@@ -190,7 +190,7 @@ cvEventDetector:
 # Compose source: cv-event-detector/compose.yaml → cv-ui
 # -----------------------------------------------------------------------------
 cvUi:
-  image: nvcr.io/nvidia/blueprint/nv-cv-event-detector-ui:2.4.1
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/nv-cv-event-detector-ui:2.4.1
   port: 7862
   vlmModel: "cosmos-reason2"
   enableVst: "true"
@@ -210,7 +210,7 @@ cvUi:
 # Port 8000 internal → 8999 on the K8s Service (matching compose mapping)
 # -----------------------------------------------------------------------------
 nimLlm:
-  image: nvcr.io/nim/meta/llama-3.1-8b-instruct:1.8.6
+  image: image-registry.openshift-image-registry.svc:5000/nim-mirror/nim-meta-llama-3.1-8b-instruct:1.8.6
   # Directory inside container for model cache (volumeMount mountPath)
   modelDirectory: /models
   # RECOMMENDED for air-gap resilience: absolute in-container path (under

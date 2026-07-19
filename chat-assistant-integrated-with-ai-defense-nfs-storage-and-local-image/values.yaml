@@ -113,11 +113,13 @@ images:
   textToSqlAgent:    image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:text-to-sql-agent
   userManagement:    image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:user-management
   notificationAgent: image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:notification-agent
-  # NVIDIA / NIM (pulled from nvcr.io – unchanged)
-  llama: "nvcr.io/nim/meta/llama-3.1-8b-instruct:1.8.6"
-  embedqa: "nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1.6"
-  content: "nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-content-safety:1.10.1"
-  topicControl: "nvcr.io/nim/nvidia/llama-3.1-nemoguard-8b-topic-control:1.10.1"
+  # NVIDIA / NIM — mirrored into the in-cluster nim-mirror namespace (see
+  # values-offline.yaml for the GitLab-registry fallback). llama shares the
+  # exact same image+tag mirrored for the vss-helm chart, same digest.
+  llama: "image-registry.openshift-image-registry.svc:5000/nim-mirror/nim-meta-llama-3.1-8b-instruct:1.8.6"
+  embedqa: "image-registry.openshift-image-registry.svc:5000/nim-mirror/nv-embedqa-e5-v5:1.6"
+  content: "image-registry.openshift-image-registry.svc:5000/nim-mirror/llama-3.1-nemoguard-8b-content-safety:1.10.1"
+  topicControl: "image-registry.openshift-image-registry.svc:5000/nim-mirror/llama-3.1-nemoguard-8b-topic-control:1.10.1"
   # Frontend
   frontend: image-registry.openshift-image-registry.svc:5000/chat-assistant/insurance-chat-assistant:frontend
 

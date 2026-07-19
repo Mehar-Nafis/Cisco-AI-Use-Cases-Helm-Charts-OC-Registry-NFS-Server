@@ -1,0 +1,33 @@
+# ============================================================================
+# VSS-HELM FAILOVER OVERLAY
+# Apply on top of values.yaml when the in-cluster mirror (nim-mirror
+# namespace in the OpenShift internal registry — this chart's default, see
+# values.yaml) is unavailable:
+#   helm upgrade vss . -f values.yaml -f values-offline.yaml -n vss
+#
+# Repoints all 7 nvcr.io-sourced images at the GitLab Container Registry on
+# the 1 TB box — a second, independent copy of the same images kept outside
+# the cluster. Registry = 198.18.134.23:5050, project = root/model-images
+# (self-signed / plain HTTP — needs an insecure registry entry wherever this
+# is pulled from). Same pattern as the insurguard chart's values-offline.yaml.
+# ============================================================================
+viaServer:
+  image: 198.18.134.23:5050/root/model-images/vss-engine:2.4.1
+
+storageMs:
+  image: 198.18.134.23:5050/root/model-images/vst-storage:2.1.0-25.11.1.1
+
+alertBridge:
+  image: 198.18.134.23:5050/root/model-images/alert-bridge:0.19.0-multiarch
+
+alertInspectorUi:
+  image: 198.18.134.23:5050/root/model-images/vss-alert-inspector-ui:2.4.1
+
+cvEventDetector:
+  image: 198.18.134.23:5050/root/model-images/nv-cv-event-detector:2.4.0
+
+cvUi:
+  image: 198.18.134.23:5050/root/model-images/nv-cv-event-detector-ui:2.4.1
+
+nimLlm:
+  image: 198.18.134.23:5050/root/model-images/llama-3.1-8b-instruct:1.8.6

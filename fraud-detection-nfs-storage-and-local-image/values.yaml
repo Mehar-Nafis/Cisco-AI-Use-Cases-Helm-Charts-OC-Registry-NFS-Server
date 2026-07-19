@@ -36,13 +36,14 @@ images:
     tag: morpheus_priority
   # Was hardcoded to registry: nvcr.io/nvidia — the one image in this chart
   # bypassing global.imageRegistry entirely, a direct unmirrored NGC
-  # dependency at every image pull. Now routed through global.imageRegistry
-  # like every other image here; the operator still needs to actually
-  # mirror nvcr.io/nvidia/tritonserver:26.03-pyt-python-py3 into that
-  # registry path first (this chart change makes it configurable to a
-  # mirror, it doesn't perform the mirroring itself — same as the deferred
-  # etcd/minio/postgres images in the insurguard chart).
+  # dependency at every image pull. CORRECTED: this is NOT the same registry
+  # namespace as global.imageRegistry (fraud-detection's own custom-built
+  # app images) — it's mirrored into the shared nim-mirror namespace instead
+  # (same convention insurguard/chat-assistant/vss-helm all use for
+  # NVIDIA-sourced images), hence its own explicit registry field rather
+  # than reusing global.imageRegistry.
   tritonBase:
+    registry: image-registry.openshift-image-registry.svc:5000/nim-mirror
     repository: tritonserver
     tag: 26.03-pyt-python-py3
   tritonModels:

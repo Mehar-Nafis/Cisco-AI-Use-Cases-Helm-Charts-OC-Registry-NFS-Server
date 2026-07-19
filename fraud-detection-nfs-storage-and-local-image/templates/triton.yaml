@@ -40,7 +40,7 @@ spec:
       # (sm_120, compute capability 12.0). The default PyPI torch only supports up to sm_90.
       # cupy-cuda12x is required by xgboost for GPU-accelerated DMatrix operations.
       - name: pip-installer
-        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.tritonBase.repository }}:{{ .Values.images.tritonBase.tag }}"
+        image: "{{ .Values.images.tritonBase.registry }}/{{ .Values.images.tritonBase.repository }}:{{ .Values.images.tritonBase.tag }}"
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
         command:
@@ -69,7 +69,7 @@ spec:
 
       containers:
       - name: tritonserver
-        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.tritonBase.repository }}:{{ .Values.images.tritonBase.tag }}"
+        image: "{{ .Values.images.tritonBase.registry }}/{{ .Values.images.tritonBase.repository }}:{{ .Values.images.tritonBase.tag }}"
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
         command: ["tritonserver", "--model-repository=/model_repo", "--exit-timeout-secs=6000", "--http-port=8005", "--grpc-port=8006", "--metrics-port=8007"]
