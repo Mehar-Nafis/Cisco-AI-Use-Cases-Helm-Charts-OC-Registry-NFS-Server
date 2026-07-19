@@ -117,6 +117,18 @@ allowPrivilegeEscalation: false
 capabilities:
   drop:
     - ALL
+# Confirmed live: an empty/unset securityContext isn't enough to escape
+# restricted-v2 — OpenShift's admission auto-fills its own required
+# runAsUser/runAsNonRoot/fsGroup/seccompProfile defaults onto any pod that
+# doesn't explicitly conflict with it, and admits under restricted-v2
+# regardless of what else the SA is authorized for (confirmed via the live
+# pod's actual .spec.securityContext, none of which came from this chart).
+# vss.podSecurityContext's own comment already said these vendor images
+# "run as root" — so force that explicitly to create a real conflict with
+# restricted-v2's non-root requirement, which is what actually triggers
+# fallback to the anyuid SCC.
+runAsUser: 0
+runAsNonRoot: false
 {{- end }}
 
 {{/*
