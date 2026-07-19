@@ -33,6 +33,14 @@ spec:
             - containerPort: {{ .Values.viaServer.frontendPort }}
               name: frontend
           env:
+            # Without this, $HOME resolves empty under OpenShift's random
+            # non-root UID, and flashinfer (vLLM's CUDA JIT layer) tries to
+            # write its workspace to $HOME/.cache -> "/.cache" (root-owned,
+            # unwritable) -> PermissionError, confirmed from this pod's own
+            # crash logs. /tmp is already writable (shared-media PVC mounted
+            # there below).
+            - name: HOME
+              value: "/tmp"
             - name: BACKEND_PORT
               value: {{ .Values.viaServer.backendPort | quote }}
             - name: FRONTEND_PORT

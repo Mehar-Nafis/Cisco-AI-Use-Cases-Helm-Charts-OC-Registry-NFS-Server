@@ -145,19 +145,36 @@ Mutual = works regardless of which group the scheduler processes first:
 Disabled when forcedNode is set (single-node override, no split needed).
 */}}
 
+{{/*
+Both affinity rules below were requiredDuringSchedulingIgnoredDuringExecution
+(hard) originally — that assumes at least 2 nodes carry the GPU nodeSelector
+label, one per mutually-exclusive group. Confirmed live on this cluster
+(oc get nodes -l nvidia.com/gpu.product=...) that only ONE node (c845) has
+the RTX6000 Blackwell label, the same single-node pool the insurguard chart
+targets — with only 1 qualifying node, the hard requirement can never be
+satisfied and every pod in both groups just sits Pending forever. Softened
+to preferredDuringSchedulingIgnoredDuringExecution, matching the
+spread-preference (not spread-requirement) pattern insurguard's own
+gpuTopologySpread/nimAntiAffinity helpers already use. If this cluster ever
+gets a second RTX6000 node, the preference will actually spread pods across
+both; on the current single-node pool, it now just lets everything co-locate
+instead of blocking scheduling entirely.
+*/}}
 {{- define "vss.primaryAffinity" -}}
 {{- if and .Values.nodeSelector.enabled (not .Values.nodeSelector.forcedNode) }}
 affinity:
   podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchExpressions:
-            - key: app.kubernetes.io/component
-              operator: In
-              values:
-                - redis
-                - nim-llm
-        topologyKey: kubernetes.io/hostname
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - redis
+                  - nim-llm
+          topologyKey: kubernetes.io/hostname
 {{- end }}
 {{- end }}
 
@@ -165,16 +182,18 @@ affinity:
 {{- if and .Values.nodeSelector.enabled (not .Values.nodeSelector.forcedNode) }}
 affinity:
   podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchExpressions:
-            - key: app.kubernetes.io/component
-              operator: In
-              values:
-                - via-server
-                - storage-ms
-                - nv-cv-event-detector
-        topologyKey: kubernetes.io/hostname
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                  - via-server
+                  - storage-ms
+                  - nv-cv-event-detector
+          topologyKey: kubernetes.io/hostname
 {{- end }}
 {{- end }}
 
