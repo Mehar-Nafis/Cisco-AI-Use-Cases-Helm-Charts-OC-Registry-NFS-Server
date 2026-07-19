@@ -23,10 +23,19 @@ spec:
       serviceAccountName: {{ include "vss.serviceAccountName" . }}
       {{- include "vss.nodeSelector" . | nindent 6 }}
       {{- include "vss.primaryAffinity" . | nindent 6 }}
+      {{- /* Vendor image (launch_vst) owned by a specific non-root UID —
+      confirmed live: "exec .../launch_vst: Permission denied" under the
+      default (no securityContext at all) pod spec, which OpenShift admits
+      under restricted-v2. The chart's own _helpers.tpl comment already
+      documents this exact case and names storage-ms explicitly. Needs
+      `oc adm policy add-scc-to-user anyuid -z vss-sa -n <namespace>`. */}}
+      {{ include "vss.anyuidPodSecurityContext" . | nindent 6 }}
       containers:
         - name: storage-ms
           image: {{ .Values.storageMs.image }}
           imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "vss.anyuidContainerSecurityContext" . | nindent 12 }}
           ports:
             - containerPort: {{ .Values.storageMs.httpPort }}
               name: http

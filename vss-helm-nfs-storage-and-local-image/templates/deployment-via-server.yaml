@@ -22,11 +22,19 @@ spec:
       {{- include "vss.nodeSelector" . | nindent 6 }}
       {{- include "vss.primaryAffinity" . | nindent 6 }}
       hostIPC: {{ .Values.viaServer.hostIPC }}
-      {{ include "vss.podSecurityContext" . | nindent 6 }}
+      {{- /* via-server is a vendor image with files owned by a specific
+      non-root UID it can't run as an arbitrary OpenShift UID (confirmed
+      live: flashinfer/vLLM crashed on permission errors under the default
+      security context) — the chart's own _helpers.tpl comment already
+      documents this exact case and names via-server explicitly. Needs
+      `oc adm policy add-scc-to-user anyuid -z vss-sa -n <namespace>`. */}}
+      {{ include "vss.anyuidPodSecurityContext" . | nindent 6 }}
       containers:
         - name: via-server
           image: {{ .Values.viaServer.image }}
           imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "vss.anyuidContainerSecurityContext" . | nindent 12 }}
           ports:
             - containerPort: {{ .Values.viaServer.backendPort }}
               name: backend
