@@ -5,6 +5,15 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: nim-cache
+  annotations:
+    # Pins this PVC to a fixed NFS subdirectory name (understood by
+    # nfs-subdir-external-provisioner, see values-storage-nfs.yaml) so
+    # deleting/recreating the PVC always rebinds to the same on-disk data —
+    # without it, the provisioner falls back to a name embedding the
+    # auto-generated PV name, which differs every time. Harmless when not
+    # using the nfs-client StorageClass. Matches the insurguard chart's
+    # identical pattern.
+    nfs.io/storage-path: "fraud-detection-nim-cache"
   labels:
     {{- include "fraud-detection.labels" . | nindent 4 }}
 spec:
@@ -20,6 +29,8 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: nim-hf-cache
+  annotations:
+    nfs.io/storage-path: "fraud-detection-nim-hf-cache"
   labels:
     {{- include "fraud-detection.labels" . | nindent 4 }}
 spec:

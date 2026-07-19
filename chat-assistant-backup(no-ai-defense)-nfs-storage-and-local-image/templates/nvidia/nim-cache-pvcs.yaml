@@ -5,6 +5,15 @@
 # downloaded models survive pod restarts — avoiding the ~20-min re-download
 # on every helm upgrade or pod crash.
 # Sizes are configured in values.yaml under storage.nimCache.*
+#
+# The nfs.io/storage-path annotation pins each PVC to a fixed subdirectory
+# name on the NFS export (understood by nfs-subdir-external-provisioner, see
+# values-storage-nfs.yaml) so deleting and recreating a PVC always rebinds
+# to the same on-disk data — without it, the provisioner falls back to a
+# name embedding the auto-generated PV name, which differs every time,
+# silently defeating the "survives helm uninstall" point of the NFS overlay.
+# Harmless when NOT using the nfs-client StorageClass. Matches the
+# insurguard chart's identical pattern.
 # ---------------------------------------------------------------------------
 ---
 apiVersion: v1
@@ -12,6 +21,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: nim-cache-llama
   namespace: {{ .Values.namespace }}
+  annotations:
+    nfs.io/storage-path: "chat-assistant-noaidefense-nim-cache-llama"
   labels:
     {{- include "chat-assistance.labels" . | nindent 4 }}
 spec:
@@ -29,6 +40,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: nim-cache-content
   namespace: {{ .Values.namespace }}
+  annotations:
+    nfs.io/storage-path: "chat-assistant-noaidefense-nim-cache-content"
   labels:
     {{- include "chat-assistance.labels" . | nindent 4 }}
 spec:
@@ -46,6 +59,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: nim-cache-topic-control
   namespace: {{ .Values.namespace }}
+  annotations:
+    nfs.io/storage-path: "chat-assistant-noaidefense-nim-cache-topic-control"
   labels:
     {{- include "chat-assistance.labels" . | nindent 4 }}
 spec:
@@ -63,6 +78,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: nim-cache-embedqa
   namespace: {{ .Values.namespace }}
+  annotations:
+    nfs.io/storage-path: "chat-assistant-noaidefense-nim-cache-embedqa"
   labels:
     {{- include "chat-assistance.labels" . | nindent 4 }}
 spec:

@@ -36,6 +36,14 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     helm.sh/resource-policy: keep
+    # Pins this PVC to a fixed NFS subdirectory name (understood by
+    # nfs-subdir-external-provisioner, see values-storage-nfs.yaml) so
+    # deleting/recreating the PVC always rebinds to the same on-disk data —
+    # without it, the provisioner falls back to a name embedding the
+    # auto-generated PV name, which differs every time. Harmless when not
+    # using the nfs-client StorageClass. Matches the insurguard chart's
+    # identical pattern.
+    nfs.io/storage-path: "vss-via-ngc-model-cache"
   labels:
     {{- include "vss.labels" . | nindent 4 }}
 spec:
@@ -56,6 +64,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     helm.sh/resource-policy: keep
+    nfs.io/storage-path: "vss-via-hf-cache"
   labels:
     {{- include "vss.labels" . | nindent 4 }}
 spec:
@@ -76,6 +85,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     helm.sh/resource-policy: keep
+    nfs.io/storage-path: "vss-nim-model-cache"
   labels:
     {{- include "vss.labels" . | nindent 4 }}
 spec:

@@ -4,6 +4,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: rails-hf-cache
   namespace: {{ .Values.namespace }}
+  annotations:
+    nfs.io/storage-path: "chat-assistant-aidefense-rails-hf-cache"
   labels:
     {{- include "chat-assistance.labels" . | nindent 4 }}
 spec:
