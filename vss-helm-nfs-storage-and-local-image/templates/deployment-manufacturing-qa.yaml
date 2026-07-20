@@ -48,6 +48,16 @@ spec:
           env:
             - name: MEDIA_BASE_DIR
               value: "/tmp"
+            # Gradio phones home to its own analytics/telemetry endpoint on
+            # startup by default — unreachable on this air-gapped cluster,
+            # and the connection attempt has to time out before the app
+            # finishes initializing, adding real delay to first readiness on
+            # every fresh pod. Confirmed live: disabling this removed that
+            # startup stall entirely. No functional impact — this is pure
+            # outbound telemetry, same class of fix as via-server's
+            # VLLM_NO_USAGE_STATS.
+            - name: GRADIO_ANALYTICS_ENABLED
+              value: "False"
             # Gradio's own internal file-response cache defaults to
             # /tmp/gradio/<hash>/ — but /tmp here is the shared-media PVC,
             # whose existing content was written by an earlier pod
