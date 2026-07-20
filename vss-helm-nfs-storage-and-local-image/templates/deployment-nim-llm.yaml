@@ -101,7 +101,16 @@ spec:
                 - python3
                 - -c
                 - "import requests; requests.get('http://localhost:{{ .Values.nimLlm.containerPort }}/v1/health/ready')"
-            initialDelaySeconds: 900
+            # Was 900s (15min), sized for a cold NGC download. Now that
+            # nimLlm.localModelPath makes warm restarts fast (observed
+            # server-up within ~3min every time in practice), that forced
+            # every healthy restart to sit falsely "unready" for 15 minutes
+            # regardless of actual health. Lowered to 120s; failureThreshold
+            # left unchanged so a genuine cold-start (real NGC download,
+            # ~7-10min observed) still has the same ~50min total tolerance
+            # window as before (120s + 100*30s), just without penalizing
+            # the common warm case.
+            initialDelaySeconds: 120
             periodSeconds: 30
             timeoutSeconds: 20
             failureThreshold: 100
@@ -111,7 +120,16 @@ spec:
                 - python3
                 - -c
                 - "import requests; requests.get('http://localhost:{{ .Values.nimLlm.containerPort }}/v1/health/ready')"
-            initialDelaySeconds: 900
+            # Was 900s (15min), sized for a cold NGC download. Now that
+            # nimLlm.localModelPath makes warm restarts fast (observed
+            # server-up within ~3min every time in practice), that forced
+            # every healthy restart to sit falsely "unready" for 15 minutes
+            # regardless of actual health. Lowered to 120s; failureThreshold
+            # left unchanged so a genuine cold-start (real NGC download,
+            # ~7-10min observed) still has the same ~50min total tolerance
+            # window as before (120s + 100*30s), just without penalizing
+            # the common warm case.
+            initialDelaySeconds: 120
             periodSeconds: 30
             timeoutSeconds: 20
             failureThreshold: 100
