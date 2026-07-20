@@ -69,7 +69,18 @@ spec:
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         {{- include "fraud-detection.containerSecurityContext" . | nindent 8 }}
         env:
-        {{- if gt (int .Values.gpu.nimCount) 0 }}
+        {{- /* Confirmed live: this was previously gated only on
+        gpu.nimCount > 0, not on whether ngcApiKey was actually set — the
+        fail-fast guard above allows localModelPath alone to satisfy it,
+        but this env var still unconditionally referenced ngc-secret, which
+        templates/secrets.yaml only creates when ngcApiKey is non-empty.
+        Result: CreateContainerConfigError (missing secret) on any
+        localModelPath-only, no-ngcApiKey deploy — the exact air-gapped
+        case this whole guard exists to support. Only nim-llm consumes
+        ngc-secret in this chart, so gating the reference itself (rather
+        than making the chart create an unneeded empty secret) is the
+        cleaner fix. */}}
+        {{- if and (gt (int .Values.gpu.nimCount) 0) .Values.ngcApiKey }}
         - name: NGC_API_KEY
           valueFrom:
             secretKeyRef:
