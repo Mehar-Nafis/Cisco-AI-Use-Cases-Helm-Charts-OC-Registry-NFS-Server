@@ -48,6 +48,19 @@ spec:
           env:
             - name: MEDIA_BASE_DIR
               value: "/tmp"
+            # Gradio's own internal file-response cache defaults to
+            # /tmp/gradio/<hash>/ — but /tmp here is the shared-media PVC,
+            # whose existing content was written by an earlier pod
+            # generation under a different random UID (restricted-v2, no
+            # fsGroup). The current UID can't mkdir there. Confirmed live:
+            # selecting a video preset threw PermissionError creating
+            # /tmp/gradio/... inside Gradio's save_file_to_cache, which is
+            # why every preset-populated field rendered as "Error". Point
+            # Gradio's cache at a plain emptyDir instead — MEDIA_BASE_DIR
+            # keeps using the shared PVC for actual media handoff with
+            # via-server, unaffected.
+            - name: GRADIO_TEMP_DIR
+              value: "/gradio-tmp"
           resources:
             {{- toYaml .Values.manufacturingQa.resources | nindent 12 }}
           volumeMounts:
@@ -57,6 +70,8 @@ spec:
               mountPath: /app/storage
             - name: app-videos
               mountPath: /app/videos
+            - name: gradio-tmp
+              mountPath: /gradio-tmp
       volumes:
         - name: shared-media
           persistentVolumeClaim:
@@ -64,6 +79,8 @@ spec:
         - name: app-storage
           emptyDir: {}
         - name: app-videos
+          emptyDir: {}
+        - name: gradio-tmp
           emptyDir: {}
 ---
 apiVersion: v1

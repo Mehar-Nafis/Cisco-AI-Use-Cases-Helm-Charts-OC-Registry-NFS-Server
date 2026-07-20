@@ -55,6 +55,18 @@ spec:
             # there below).
             - name: HOME
               value: "/tmp"
+            # vLLM's own usage-stats telemetry thread tries to write
+            # ~/.config/vllm/usage_stats.json — with HOME=/tmp above (same
+            # shared-media PVC, same ownership mismatch that motivated
+            # HOME=/tmp in the first place), that hits the identical
+            # PermissionError, confirmed from this pod's own crash logs
+            # (EngineCore_DP0 _report_usage_worker). Unlike flashinfer's
+            # cache, this thread isn't needed for the app to function —
+            # it's outbound usage telemetry, which also has no business
+            # phoning home on an air-gapped cluster. Disabling it removes
+            # both problems at once.
+            - name: VLLM_NO_USAGE_STATS
+              value: "1"
             - name: BACKEND_PORT
               value: {{ .Values.viaServer.backendPort | quote }}
             - name: FRONTEND_PORT
