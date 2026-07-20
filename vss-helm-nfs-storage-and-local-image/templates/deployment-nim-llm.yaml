@@ -1,5 +1,8 @@
 {{- $fullname := include "vss.fullname" . }}
 {{- $component := "nim-llm" }}
+{{- if and (not .Values.nimLlm.localModelPath) (not .Values.global.ngcApiKey) }}
+{{ fail "nim-llm needs either nimLlm.localModelPath or global.ngcApiKey set. With neither, NIM_MODEL_NAME is omitted and the image falls back to its own NGC hub/manifest lookup at startup — on a truly air-gapped network that call can't even resolve, so the pod hangs/crash-loops instead of failing fast. localModelPath is the recommended fix (skips NGC entirely, confirmed by reading nim_llm_sdk source on this exact image in the insurguard chart) — see its values.yaml comment for how to find the real snapshot path." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

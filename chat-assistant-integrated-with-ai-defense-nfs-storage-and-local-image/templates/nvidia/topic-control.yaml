@@ -1,4 +1,7 @@
 {{- if .Values.nvidia.enabled }}
+{{- if and (not .Values.nvidia.topicControlLocalModelPath) (not .Values.nvidia.topicControlProfile) (not .Values.ngc.apiKey) }}
+{{ fail "topic-control needs nvidia.topicControlLocalModelPath, nvidia.topicControlProfile, or ngc.apiKey set. With none of these, NIM_MODEL_PROFILE is omitted and the image falls back to its own NGC hub/org lookup at startup — on a truly air-gapped network that call can't even resolve, so the pod hangs/crash-loops instead of failing fast. localModelPath is the recommended fix (skips NGC entirely, see its values.yaml comment); ngc.apiKey is also now required for the NGC_API_KEY env var and imagePullSecret this template references below when set." }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,8 +28,10 @@ spec:
       {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
       {{- include "chat-assistance.nimAntiAffinity" . | nindent 6 }}
 
+      {{- if .Values.ngc.apiKey }}
       imagePullSecrets:
         - name: ncr-registry-secret
+      {{- end }}
       initContainers:
         - name: wait-for-content
           image: busybox:1.36
