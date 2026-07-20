@@ -113,7 +113,6 @@ securityContext: {}
 {{- end }}
 
 {{- define "vss.anyuidContainerSecurityContext" }}
-allowPrivilegeEscalation: false
 capabilities:
   drop:
     - ALL
