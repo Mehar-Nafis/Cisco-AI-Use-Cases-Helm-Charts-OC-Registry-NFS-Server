@@ -22,16 +22,25 @@ spec:
         {{- include "vss.selectorLabels" (dict "root" . "component" $component) | nindent 8 }}
     spec:
       serviceAccountName: {{ include "vss.serviceAccountName" . }}
-      {{- /* Was unconditional "ngc-secret" — that secret is never created
-      anywhere in this chart. templates/secret.yaml actually creates
-      "{{ include "vss.fullname" . }}-ngc-registry", CONDITIONAL on
-      global.ngcApiKey being set. Referencing it unconditionally broke image
-      pulls when ngcApiKey was unset (a nonexistent imagePullSecret is a
-      hard pull failure, not a silent no-op) — now that the image itself
-      comes from the internal nim-mirror instead of raw nvcr.io, this
-      secret isn't even needed once ngcApiKey is dropped for the fully
-      air-gapped case. */}}
-      {{- if .Values.global.ngcApiKey }}
+      {{- /* CORRECTED: this was previously tied to global.ngcApiKey, which
+      conflated two unrelated things — ngcApiKey is about nim-llm's own
+      RUNTIME NGC calls (env vars), not image pulls. Confirmed live: with
+      ngcApiKey set, this injected a non-empty imagePullSecrets pointing at
+      an nvcr.io-only credential (useless once the image comes from
+      nim-mirror) — and a NON-EMPTY imagePullSecrets list suppresses
+      OpenShift's automatic injection of the ServiceAccount's own
+      internal-registry credential (the one that actually works here, since
+      vss-sa already has cross-namespace pull access to nim-mirror granted
+      via `oc policy add-role-to-user system:image-puller
+      system:serviceaccount:vss:vss-sa -n nim-mirror`). Result: "manifest
+      ... authentication required" pull failures, while every other pod in
+      this chart — all with EMPTY imagePullSecrets — pulled from the same
+      nim-mirror namespace with no issue. Fixed: only inject this nvcr.io
+      pull secret if nimLlm.image is explicitly overridden back to a raw
+      nvcr.io/... path (nimLlm.ngcImagePull, default false) — matches the
+      insurguard chart's ngcImagePull.enabled pattern exactly, for the same
+      reason. */}}
+      {{- if .Values.nimLlm.ngcImagePull }}
       imagePullSecrets:
         - name: {{ $fullname }}-ngc-registry
       {{- end }}

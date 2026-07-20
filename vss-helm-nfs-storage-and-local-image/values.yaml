@@ -211,6 +211,14 @@ cvUi:
 # -----------------------------------------------------------------------------
 nimLlm:
   image: image-registry.openshift-image-registry.svc:5000/nim-mirror/nim-meta-llama-3.1-8b-instruct:1.8.6
+  # Only needed if the image above is overridden back to a raw nvcr.io/...
+  # path — the default image comes from the internal nim-mirror, which vss-sa
+  # already has cross-namespace pull access to (see the RoleBinding note in
+  # deployment-nim-llm.yaml). Leave false: a non-empty imagePullSecrets list
+  # suppresses OpenShift's automatic injection of the ServiceAccount's own
+  # internal-registry credential, breaking the mirror pull — confirmed live.
+  # Same pattern/reasoning as the insurguard chart's ngcImagePull.enabled.
+  ngcImagePull: false
   # Directory inside container for model cache (volumeMount mountPath)
   modelDirectory: /models
   # RECOMMENDED for air-gap resilience: absolute in-container path (under
