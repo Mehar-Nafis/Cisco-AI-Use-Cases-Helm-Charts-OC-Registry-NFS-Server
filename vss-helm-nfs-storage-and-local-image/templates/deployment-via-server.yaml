@@ -113,8 +113,24 @@ spec:
                 secretKeyRef:
                   name: {{ $fullname }}-credentials
                   key: HF_TOKEN
+            # Confirmed live (reading /opt/nvidia/via/start_via.sh directly):
+            # the bash entrypoint just forwards MODEL_PATH raw to the VIA
+            # server binary — no git:-prefix handling visible there, so that
+            # logic (and the cache-check-before-clone behavior confirmed
+            # empirically across two separate pod generations, which loaded
+            # straight from this cache dir with zero HF network calls both
+            # times) lives inside the compiled app itself. Previously
+            # pointed at /tmp/ngc_cache, i.e. the shared-media PVC — but
+            # that PVC is on local (non-NFS) storage by deliberate choice
+            # (see values-storage-nfs.yaml notes), so it doesn't reliably
+            # survive a helm uninstall/reinstall the way NFS-backed PVCs
+            # do. Relocated to a dedicated subdir under the ngc-model-cache
+            # mount below, which is already NFS-backed and already mounted
+            # in this same pod — just needs its own subdir to avoid
+            # colliding with the unrelated cv_models/* content already
+            # there.
             - name: NGC_MODEL_CACHE
-              value: "/tmp/ngc_cache"
+              value: "/root/.via/ngc_model_cache/vlm_git_cache"
           resources:
             {{- toYaml .Values.viaServer.resources | nindent 12 }}
           volumeMounts:
