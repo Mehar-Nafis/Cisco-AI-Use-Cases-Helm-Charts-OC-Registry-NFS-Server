@@ -57,16 +57,25 @@ spec:
             - containerPort: {{ .Values.nimLlm.containerPort }}
               name: http
           env:
+            # Must match modelDirectory below — this is the image's own
+            # default (confirmed live via `env` inside a running pod), made
+            # explicit here so the mount path and the SDK's actual cache
+            # path can never silently drift apart again the way they did
+            # before this was discovered (PVC was mounted at /models, which
+            # nim_llm_sdk never wrote to; real downloads landed in
+            # NIM_CACHE_PATH's default, /opt/nim/.cache, on the container's
+            # ephemeral overlay filesystem instead).
+            - name: NIM_CACHE_PATH
+              value: {{ default "/opt/nim/.cache" .Values.nimLlm.modelDirectory | quote }}
             {{- if .Values.nimLlm.localModelPath }}
             # Points nim_llm_sdk.hub.ngc_injector.inject_ngc_hub at an
             # already-downloaded local snapshot dir (under nim-model-cache's
-            # mount at .Values.nimLlm.modelDirectory, default /models) —
-            # takes the early branch that loads straight from disk, skipping
-            # the manifest/NGC profile lookup entirely. Confirmed (on this
-            # same NIM image, meta/llama-3.1-8b-instruct:1.8.6, in the
-            # insurguard chart) by reading inject_ngc_hub's source directly
-            # out of a running pod. Find the actual snapshot path by
-            # inspecting the nim-model-cache PVC once it's warm.
+            # mount at .Values.nimLlm.modelDirectory) — takes the early
+            # branch that loads straight from disk, skipping the
+            # manifest/NGC profile lookup entirely. Confirmed (on this same
+            # NIM image, meta/llama-3.1-8b-instruct:1.8.6, in the insurguard
+            # chart) by reading inject_ngc_hub's source directly out of a
+            # running pod.
             - name: NIM_MODEL_NAME
               value: {{ .Values.nimLlm.localModelPath | quote }}
             {{- end }}
@@ -85,7 +94,7 @@ spec:
             - name: shm
               mountPath: /dev/shm
             - name: nim-model-cache
-              mountPath: {{ default "/models" .Values.nimLlm.modelDirectory }}
+              mountPath: {{ default "/opt/nim/.cache" .Values.nimLlm.modelDirectory }}
           livenessProbe:
             exec:
               command:

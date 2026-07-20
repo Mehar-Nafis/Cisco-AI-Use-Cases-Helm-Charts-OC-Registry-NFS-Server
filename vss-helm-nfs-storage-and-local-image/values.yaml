@@ -219,20 +219,29 @@ nimLlm:
   # internal-registry credential, breaking the mirror pull — confirmed live.
   # Same pattern/reasoning as the insurguard chart's ngcImagePull.enabled.
   ngcImagePull: false
-  # Directory inside container for model cache (volumeMount mountPath)
-  modelDirectory: /models
+  # Directory inside container for model cache (volumeMount mountPath).
+  # MUST match the image's own NIM_CACHE_PATH default (/opt/nim/.cache) —
+  # confirmed live that this is genuinely where nim_llm_sdk downloads to
+  # (HF-hub-style layout under <this>/ngc/hub/models--.../snapshots/<rev>),
+  # NOT an arbitrary path of our choosing. The chart originally mounted the
+  # nim-model-cache PVC at /models instead, which nim_llm_sdk never
+  # actually wrote to — every restart was silently re-downloading into the
+  # container's ephemeral overlay filesystem (confirmed via `df -h`
+  # showing /opt/nim/.cache on `overlay`, not the NFS PVC) and only
+  # "worked" by accident because the pod stayed on the same single GPU
+  # node. Fixed by remounting the same PVC here instead.
+  modelDirectory: /opt/nim/.cache
   # RECOMMENDED for air-gap resilience: absolute in-container path (under
   # modelDirectory above, i.e. within the nim-model-cache PVC) of an
-  # already-downloaded HF-format model snapshot, e.g.
-  #   /models/ngc/hub/models--nim--meta--llama-3.1-8b-instruct/snapshots/<rev>
-  # Sets NIM_MODEL_NAME — see templates/deployment-nim-llm.yaml for the full
-  # explanation of why this skips the NGC/manifest lookup entirely (this is
-  # the exact same NIM image, confirmed by reading its own source, used in
-  # the insurguard chart's llamaParser.localModelPath). Find the actual
-  # snapshot path by inspecting the nim-model-cache PVC once it's warm.
+  # already-downloaded HF-format model snapshot. Sets NIM_MODEL_NAME — see
+  # templates/deployment-nim-llm.yaml for the full explanation of why this
+  # skips the NGC/manifest lookup entirely (this is the exact same NIM
+  # image, confirmed by reading its own source, used in the insurguard
+  # chart's llamaParser.localModelPath). Confirmed live via
+  # `find .../snapshots -mindepth 1 -maxdepth 1` against the running pod.
   # Leave empty to fall back to NIM's own NGC hub/manifest auto-selection
   # (needs global.ngcApiKey and live NGC access).
-  localModelPath: ""
+  localModelPath: /opt/nim/.cache/ngc/hub/models--nim--meta--llama-3.1-8b-instruct/snapshots/hf-8c22764-nim1.3b
   # Internal container port
   containerPort: 8000
   # Service port exposed to other pods (mirrors docker-compose host port 8999)
