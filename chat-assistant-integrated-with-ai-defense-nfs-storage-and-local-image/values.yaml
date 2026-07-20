@@ -13,10 +13,21 @@ namespace: chat-assistant
 #   helm install ... -f my-secrets.yaml
 # ---------------------------------------------------------------------------
 ngc:
-  # Required – the chart will fail to render if left empty
+  # Optional — each NIM's fail-fast guard accepts apiKey OR a *LocalModelPath
+  # OR a *Profile value; only fails if none of the three is set.
   apiKey: ""
   # NGC registry username (leave as default for NIM)
   registryUser: "$oauthtoken"
+  # Only needed if images.llama/content/topicControl/embedqa are overridden
+  # back to raw nvcr.io/... paths — the default images come from an internal
+  # mirror registry, which the ServiceAccount already has its own pull
+  # credential auto-injected for. Leave false: a non-empty imagePullSecrets
+  # list suppresses OpenShift's automatic injection of that credential, even
+  # when apiKey is set purely to satisfy a NIM's fail-fast guard rather than
+  # to pull from nvcr.io — confirmed as a real bug in the vss-helm chart's
+  # equivalent nim-llm component, same pattern here since imagePullSecrets
+  # was previously gated on apiKey truthiness alone.
+  ncrImagePull: false
 
 # ---------------------------------------------------------------------------
 # Cisco AI Defense — proxy that inspects LLM traffic before it reaches the NIMs.

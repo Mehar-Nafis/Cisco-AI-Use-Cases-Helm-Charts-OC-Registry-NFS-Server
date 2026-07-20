@@ -28,7 +28,10 @@ spec:
       {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
       {{- include "chat-assistance.nimAntiAffinity" . | nindent 6 }}
 
-      {{- if .Values.ngc.apiKey }}
+      {{- /* See llama.yaml's imagePullSecrets comment — same fix, decoupled
+      from ngc.apiKey so satisfying the fail-fast guard via apiKey alone
+      doesn't suppress the SA's auto-injected internal-registry credential. */}}
+      {{- if .Values.ngc.ncrImagePull }}
       imagePullSecrets:
         - name: ncr-registry-secret
       {{- end }}
@@ -59,6 +62,10 @@ spec:
           ports:
             - containerPort: 8000
           env:
+            # See llama.yaml's NIM_CACHE_PATH comment — must match the
+            # nim-cache mount below.
+            - name: NIM_CACHE_PATH
+              value: "/opt/nim/.cache"
             - name: NGC_API_KEY
               valueFrom:
                 secretKeyRef:

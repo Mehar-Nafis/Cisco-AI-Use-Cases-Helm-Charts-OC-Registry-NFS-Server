@@ -28,7 +28,16 @@ spec:
       {{- include "chat-assistance.nodeSelector" . | nindent 6 }}
       {{- include "chat-assistance.nimAntiAffinity" . | nindent 6 }}
 
-      {{- if .Values.ngc.apiKey }}
+      {{- /* Only inject this nvcr.io-only pull secret if images.llama is
+      explicitly overridden back to a raw nvcr.io/... path (ngc.ncrImagePull,
+      default false) — was previously gated on ngc.apiKey truthiness, which
+      injected a non-empty imagePullSecrets (useless once the image comes
+      from the internal mirror registry) whenever apiKey was set purely to
+      satisfy the fail-fast guard below. A non-empty imagePullSecrets list
+      suppresses OpenShift's automatic injection of the ServiceAccount's own
+      working internal-registry credential — same bug confirmed live in the
+      vss-helm chart's nim-llm component. */}}
+      {{- if .Values.ngc.ncrImagePull }}
       imagePullSecrets:
         - name: ncr-registry-secret
       {{- end }}
@@ -38,6 +47,15 @@ spec:
           ports:
             - containerPort: 8000
           env:
+            # Must match the nim-cache mount below — made explicit so the
+            # two can never silently drift apart (this is the same class of
+            # bug confirmed live in vss-helm: a cache PVC mounted at a path
+            # the NIM SDK never actually wrote to, because NIM_CACHE_PATH
+            # wasn't set to match). Unconfirmed against this exact image via
+            # a live pod, but /opt/nim/.cache is documented as nim_llm_sdk's
+            # own default, matching this file's llamaLocalModelPath comment.
+            - name: NIM_CACHE_PATH
+              value: "/opt/nim/.cache"
             - name: NGC_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -71,6 +89,14 @@ spec:
             # Remove vLLM scheduler delay so tokens are dispatched without artificial pause
             - name: VLLM_SLEEP_WHEN_IDLE
               value: "0"
+            # vLLM's own usage-stats telemetry thread writes
+            # ~/.config/vllm/usage_stats.json — pure outbound telemetry with
+            # no business phoning home on an air-gapped cluster, and the
+            # same mechanism crashed vss-helm's via-server when its $HOME
+            # happened to be on a PVC with a UID mismatch. Disabling
+            # preemptively rather than waiting to hit that live.
+            - name: VLLM_NO_USAGE_STATS
+              value: "1"
             # Stream in small token chunks (5) for smooth UI render instead of word-by-word single tokens
             # Adjust in values.yaml via nvidia.streamingTokenChunkSize
             - name: NIM_STREAMING_TOKEN_CHUNK_SIZE

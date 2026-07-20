@@ -100,6 +100,28 @@ spec:
           value: "/tmp/hf-cache"
         - name: TRANSFORMERS_CACHE
           value: "/tmp/hf-cache"
+        {{- if .Values.global.airGapped }}
+        # Only forced when global.airGapped is true, matching this chart's
+        # own intent toggle (see the fail-fast guard above) — someone who
+        # sets airGapped: false to intentionally rely on live NGC/HF access
+        # shouldn't have that silently blocked. This image's actual
+        # framework isn't confirmed (see the NIM_MODEL_NAME comment above),
+        # so these are set defensively rather than waiting to hit the same
+        # failures confirmed live elsewhere this session — HF_HUB_OFFLINE/
+        # TRANSFORMERS_OFFLINE prevent any accidental live HF calls if this
+        # is transformers-based. If it isn't, an unrecognized env var is
+        # simply ignored.
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: TRANSFORMERS_OFFLINE
+          value: "1"
+        {{- end }}
+        # Unconditional: pure telemetry opt-out, never blocks legitimate
+        # model access either way. Prevents vLLM's usage-stats thread from
+        # crashing on a permission error the way it did in vss-helm's
+        # via-server, if this image is vLLM-based.
+        - name: VLLM_NO_USAGE_STATS
+          value: "1"
         ports:
         - containerPort: 8000
           name: http
