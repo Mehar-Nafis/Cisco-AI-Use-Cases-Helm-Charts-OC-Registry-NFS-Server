@@ -140,13 +140,25 @@ spec:
         readinessProbe:
           tcpSocket:
             port: 8000
-          initialDelaySeconds: 120
-          periodSeconds: 10
+          initialDelaySeconds: 300
+          periodSeconds: 15
+          failureThreshold: 20
         livenessProbe:
           tcpSocket:
             port: 8000
-          initialDelaySeconds: 180
-          periodSeconds: 15
+          # Confirmed live: a genuine cold NGC download (profile selection
+          # to engine launch) took ~213s, right up against the previous
+          # 180s initialDelaySeconds + 3-failure default tolerance (~225s
+          # total) — this pod got killed and restarted mid-download on one
+          # actual run. Widened with real headroom, same class of fix as
+          # vss-helm's nim-llm probe tuning (that one started even more
+          # undersized, at the opposite extreme of 900s before being
+          # deliberately shortened once localModelPath made warm restarts
+          # fast — this chart doesn't have that bypass confirmed yet, so
+          # staying generous here rather than guessing a tight number).
+          initialDelaySeconds: 600
+          periodSeconds: 30
+          failureThreshold: 20
       volumes:
       - name: nim-cache
         persistentVolumeClaim:
