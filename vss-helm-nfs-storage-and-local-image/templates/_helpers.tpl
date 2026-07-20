@@ -129,6 +129,20 @@ capabilities:
 # fallback to the anyuid SCC.
 runAsUser: 0
 runAsNonRoot: false
+# Confirmed live (round 2): even admitted under anyuid as root, launch_vst
+# still failed with "Permission denied" — but a debug pod's `ls -la`/
+# `head -c 100` on the exact same binary showed correct rwxr-xr-x ELF
+# permissions (readable/executable by owner, group, AND other). Standard
+# Unix DAC permission bits can't explain a denial when "other" already has
+# the execute bit — that points at SELinux (MAC), not file permissions.
+# anyuid's SELinux strategy is still MustRunAs (confined); only the
+# privileged SCC uses RunAsAny (unconfined/spc_t). vss-sa already has
+# `privileged` granted (`oc adm policy add-scc-to-user privileged -z
+# vss-sa -n <namespace>`) but the pod was landing on anyuid anyway, since
+# nothing in the spec forced the fallback — requesting `privileged: true`
+# here is the one thing anyuid can't satisfy, forcing OpenShift to select
+# the privileged SCC instead.
+privileged: true
 {{- end }}
 
 {{/*
