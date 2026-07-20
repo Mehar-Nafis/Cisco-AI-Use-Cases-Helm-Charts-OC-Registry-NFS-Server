@@ -188,23 +188,36 @@ nvidia:
   # inspecting each nim-cache-<name> PVC once it's warm (see
   # discover-nfs-direct.sh). Takes priority over *Profile above if both set.
   #
-  # NOTE: confirmed for llama/content/topicControl only by analogy (same NIM
-  # SDK family as insurguard's llama-parser/nemotron-vlm) — NOT independently
-  # verified against these exact images. embedqa is a different kind of NIM
-  # (embedding, not chat) and may behave like insurguard's nvclip instead
-  # (unconditional NGC auth regardless of cache) — confirm via a live pod's
-  # logs/source before trusting any of these for real air-gap resilience.
+  # CONFIRMED live for llama/content/topicControl (2026-07-20): all three
+  # are genuinely nim_llm_sdk-based, and setting these to a real discovered
+  # snapshot path made them skip the NGC/manifest lookup entirely.
   #
-  # Also note: ngc.apiKey remains required regardless, for pulling these
-  # unmirrored nvcr.io images in the first place (see ncr-registry-secret in
-  # templates/secrets.yaml) — these fields only eliminate the in-container
-  # runtime NGC dependency, not the image-pull one. Mirroring these 4 images
-  # into an internal registry (out of scope here, same as insurguard's
-  # deferred etcd/minio/postgres) would be needed to drop ngc.apiKey entirely.
+  # embedqa does NOT use this mechanism at all — confirmed by reading its
+  # actual source (nimlib/model_manifest.py, nimlib/ngc/client.py) inside a
+  # throwaway pod running the real image: no nim_llm_sdk, NIM_MODEL_NAME
+  # isn't read anywhere. embedqaLocalModelPath is gone — use
+  # nvidia.embedqaIgnoreDownloadFail below instead. See embedqa.yaml's
+  # fail-fast guard for the full explanation.
+  #
+  # Images are mirrored into the internal nim-mirror registry by default
+  # (see images.* below) — ngc.apiKey is no longer needed for pulling them,
+  # only for runtime NGC access on components that don't have a
+  # localModelPath/ignoreDownloadFail bypass configured.
   llamaLocalModelPath: ""
   contentLocalModelPath: ""
   topicControlLocalModelPath: ""
-  embedqaLocalModelPath: ""
+  # See the comment above embedqaProfile — this does NOT take a path.
+  # Confirmed live (2026-07-20): embedqa's ModelManifest.download_models()
+  # unconditionally constructs an NGCClient (a real NGC API call) before
+  # ever checking per-component cache, even with every file already warm on
+  # the nim-cache-embedqa PVC. Setting this to true sets
+  # NIM_IGNORE_MODEL_DOWNLOAD_FAIL=1, which nimutils.download_models's own
+  # exception handling swallows that failure with (confirmed present in
+  # source) and proceeds using whatever's already cached — same nvclip-style
+  # bypass insurguard needed, via an env flag instead of a Triton adapter.
+  # Only safe once nim-cache-embedqa is actually warm — bootstrap once with
+  # ngc.apiKey set first, same as every other NIM in this chart.
+  embedqaIgnoreDownloadFail: false
 
 # ---------------------------------------------------------------------------
 # OpenShift Routes (HAProxy path-based – one Route per service)

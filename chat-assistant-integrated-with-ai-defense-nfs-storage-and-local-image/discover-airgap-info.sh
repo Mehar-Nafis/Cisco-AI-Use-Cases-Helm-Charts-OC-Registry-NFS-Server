@@ -115,26 +115,37 @@ fi
 echo
 echo "== Next steps =="
 cat <<'EOF'
-1. Take the snapshot paths from section 1, prefix with /opt/nim/.cache/ (the
-   in-container mount point), and set:
-     --set nvidia.llamaLocalModelPath=<path> \
-     --set nvidia.contentLocalModelPath=<path> \
-     --set nvidia.topicControlLocalModelPath=<path> \
-     --set nvidia.embedqaLocalModelPath=<path>   # only if section 2 looks HF-hub-shaped
+1. Take the llama/content/topicControl snapshot paths from section 1,
+   prefix with /opt/nim/.cache/ (the in-container mount point), and set via
+   a values file (not --set, these are POSIX paths and get mangled by
+   MSYS/Git-Bash on Windows):
+     nvidia:
+       llamaLocalModelPath: <path>
+       contentLocalModelPath: <path>
+       topicControlLocalModelPath: <path>
+   Confirmed live (2026-07-20) — this is the genuine nim_llm_sdk bypass,
+   same mechanism as insurguard's llama-parser.
 
-2. If embedqa's cache (section 2) looks like a Triton model repository
-   (config.pbtxt files, versioned model dirs) rather than an HF-hub snapshot
-   tree, it's the insurguard nvclip case, not the llama-parser case —
-   embedqaLocalModelPath won't work, and it needs the same
-   airgappedTritonMode-style adapter approach instead. Report back what
-   section 2 actually shows before assuming either way.
+2. embedqa does NOT use localModelPath at all (confirmed by reading its
+   actual source: nimlib/model_manifest.py's ModelManifest.download_models
+   unconditionally constructs an NGCClient — a real NGC API call — before
+   ever checking per-component cache, regardless of what's already on
+   disk). Once section 2 shows real cached content (an HF-hub-style
+   snapshots/ tree, or the FP16_onnx/tokenizer split this NIM actually
+   uses), set:
+     nvidia:
+       embedqaIgnoreDownloadFail: true
+   This sets NIM_IGNORE_MODEL_DOWNLOAD_FAIL=1, which nimutils.download_models's
+   own exception handling (confirmed present in source) swallows that
+   failure with and proceeds using the warm cache — same nvclip-style
+   bypass insurguard needed, via an env flag instead of a Triton adapter.
 
 3. If any PVC came back empty in section 1, that component has never been
    run against this cache — do a one-time bootstrap install with
    ngc.apiKey set to populate it, then re-run this script.
 
-4. As with insurguard, ngc.apiKey stays required for image pulls regardless
-   (these 4 NIM images are pulled straight from nvcr.io, unmirrored) — these
-   localModelPath fixes only remove the in-container runtime NGC dependency,
-   not the image-pull one.
+4. Unlike insurguard, this chart's 4 NIM images are already mirrored into
+   the internal nim-mirror registry by default (see images.* in
+   values.yaml) — ngc.apiKey is NOT needed for image pulls anymore, only
+   for runtime NGC access on components without a bypass configured.
 EOF

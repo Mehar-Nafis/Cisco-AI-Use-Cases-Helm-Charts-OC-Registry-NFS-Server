@@ -1,6 +1,6 @@
 {{- if .Values.nvidia.enabled }}
-{{- if and (not .Values.nvidia.embedqaLocalModelPath) (not .Values.nvidia.embedqaProfile) (not .Values.ngc.apiKey) }}
-{{ fail "embedqa needs nvidia.embedqaLocalModelPath, nvidia.embedqaProfile, or ngc.apiKey set. With none of these, NIM_MODEL_PROFILE is omitted and the image falls back to its own NGC hub/org lookup at startup — on a truly air-gapped network that call can't even resolve, so the pod hangs/crash-loops instead of failing fast. embedqaLocalModelPath's mechanism is UNVERIFIED for this specific component (see the env var comment below) — ngc.apiKey remains the safer default here until that's confirmed live." }}
+{{- if and (not .Values.nvidia.embedqaIgnoreDownloadFail) (not .Values.ngc.apiKey) }}
+{{ fail "embedqa needs nvidia.embedqaIgnoreDownloadFail or ngc.apiKey set. CONFIRMED live by reading this image's actual source (nimlib/model_manifest.py, nimlib/ngc/client.py, inside a throwaway pod running the real nv-embedqa-e5-v5 image): this NIM uses a completely different mechanism than llama/content/topicControl — no nim_llm_sdk, no NIM_MODEL_NAME local-path bypass (that field previously existed here and did nothing; removed). Its ModelManifest.download_models() unconditionally constructs an NGCClient (which makes a real NGC API call, e.g. get_org_names()/get_org_list()) BEFORE checking per-component cache — even with every model file already cached, this NGC touch always happens. nvidia.embedqaProfile alone does NOT avoid it either (profile selection is orthogonal to the client construction). The only two ways around it: nvidia.embedqaIgnoreDownloadFail sets NIM_IGNORE_MODEL_DOWNLOAD_FAIL=1, which nimutils.download_models's own try/except swallows that failure with (confirmed present in source) and proceeds using whatever's already on the cache PVC — same nvclip-style bypass insurguard needed, just via an env flag instead of a Triton adapter; or ngc.apiKey for genuine live access." }}
 {{- end }}
 ---
 apiVersion: apps/v1
@@ -42,17 +42,20 @@ spec:
             # nim-cache mount below.
             - name: NIM_CACHE_PATH
               value: "/opt/nim/.cache"
-            {{- if .Values.nvidia.embedqaLocalModelPath }}
-            # UNVERIFIED: unlike llama/content/topicControl (confirmed
-            # nim_llm_sdk-based), embedqa's actual backend hasn't been
-            # inspected — it may behave like nvclip in the insurguard chart
-            # (unconditional NGC auth regardless of cache) rather than
-            # honoring NIM_MODEL_NAME. Confirm via a live pod's logs/source
-            # before relying on this — see llama.yaml's comment for the
-            # mechanism this assumes.
-            - name: NIM_MODEL_NAME
-              value: {{ .Values.nvidia.embedqaLocalModelPath | quote }}
-            {{- else if .Values.nvidia.embedqaProfile }}
+            {{- if .Values.nvidia.embedqaIgnoreDownloadFail }}
+            # Confirmed live via source (nimlib/nimutils.py's
+            # get_ignore_model_download_fail/download_models): lets the
+            # unconditional NGCClient() construction failure (see the guard
+            # message above) be caught and ignored rather than crashing the
+            # container, so startup proceeds using whatever's already on
+            # the nim-cache PVC instead. Only safe to rely on once that PVC
+            # is actually warm (bootstrap once with ngc.apiKey first).
+            - name: NIM_IGNORE_MODEL_DOWNLOAD_FAIL
+              value: "true"
+            {{- end }}
+            {{- if .Values.nvidia.embedqaProfile }}
+            # Independent of the above — pins which profile gets selected,
+            # doesn't by itself avoid the NGC client construction touch.
             - name: NIM_MODEL_PROFILE
               value: {{ .Values.nvidia.embedqaProfile | quote }}
             {{- end }}
